@@ -87,7 +87,7 @@ class GeminiProvider(LLMProvider):
             return LLMResult(status=500, response="")
 
 
-class LMStudioProvider(LLMProvider, LLMCall):
+class LMStudioProvider(LLMProvider):
     def __init__(self, logger, base_url):
         self.lms_client = AsyncClient(base_url=base_url, api_key="lm-studio")
         self.logger = logger

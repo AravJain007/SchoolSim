@@ -49,3 +49,10 @@ Teachers can use this to test their materials for the class they are about to te
 
 3. Deployment:
    - Docker
+
+### Metrics that I plan on using:
+
+1. Flesch‑Kincaid Score - For Clarity & Readability
+2. Bloom’s Taxonomy - Hierarchy of cognitive skills (Knowledge → Comprehension → Application → Analysis → Synthesis → Evaluation) – useful for “Depth & Breadth” metrics.
+3. Pedagogical Soundness - ADDIE could also be taken into consideration if entire course creation is in question.
+4.
