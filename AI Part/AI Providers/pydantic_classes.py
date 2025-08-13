@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from enum import Enum
+from typing import Any
 
 from dotenv import load_dotenv
-from gguf import Any
 from pydantic import BaseModel, Field
 
 load_dotenv()

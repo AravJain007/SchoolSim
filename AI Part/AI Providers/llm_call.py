@@ -30,7 +30,7 @@ class LLMCall:
 
         Parameters
         ----------
-        response_input : LLMCallResponseInput
+        response_input :  LLMCallResponseInput
             This is a PyDantic Class which keeps input in check. Contains input_prompt_to_llm (str), model_provider (Literal["google", "openai", "anthropic", "vllm", "ollama", "custom"]) and model_name (str).
 
         Returns
@@ -42,9 +42,9 @@ class LLMCall:
             reply_from_llm = await self.generation_function[
                 response_input.model_provider
             ].generate(response_input.input_prompt_to_llm, response_input.model_name)
-            return LLMResult(status=200, response=reply_from_llm)
+            return reply_from_llm
         except Exception as e:
-            self.logger.error(f"Error: {e}")
+            self.logger.error(f"Error:  {e}")
             return LLMResult(status=400, response="")
 
 
@@ -61,9 +61,9 @@ class GeminiProvider(LLMProvider):
 
         Parameters
         ----------
-        input_prompt : str
+        input_prompt :  str
             The prompt provided as an input to the LLM
-        model_name : str
+        model_name :  str
             Name of the model available from the provider
 
         Returns
@@ -78,7 +78,7 @@ class GeminiProvider(LLMProvider):
             return LLMResult(status=200, response=response.text)
         except Exception as e:
             self.logger.error(
-                f"""You have encountered the error:
+                """You have encountered the error:
                 {e}
                 This error is due to no response from the Gemini API.
                 Kindly check if you have hit the rate limit if you are using the free tier of Gemini API.
@@ -99,9 +99,9 @@ class LMStudioProvider(LLMProvider):
 
         Parameters
         ----------
-        input_prompt : str
+        input_prompt :  str
             The prompt provided as an input to the LLM
-        model_name : str
+        model_name :  str
             Name of the model available from the provider
 
         Returns
@@ -116,7 +116,42 @@ class LMStudioProvider(LLMProvider):
             return LLMResult(status=200, response=response.choices[0].message)
         except Exception as e:
             self.logger.error(
-                f"""You have encountered the error:
+                """You have encountered the error:
+                {e}
+                This error is due to no response from LM Studio.
+                Kindly check if you have started the LM Studio server and set the server path properly.
+                """
+            )
+            return LLMResult(status=500, response="")
+
+
+class vLLMProvider(LLMProvider):
+    def __init__(self, logger, base_url):
+        self.lms_client = AsyncClient(base_url=base_url, api_key="lm-studio")
+        self.logger = logger
+
+    async def generate(
+        self, input_prompt: str, model_name: str = "openai/gpt-oss-20b"
+    ) -> LLMResult:
+        """Given function is to generate a response using Gemini series of models
+
+        Parameters
+        ----------
+        input_prompt :  str
+            The prompt provided as an input to the LLM
+        model_name :  str
+            Name of the model available from the provider
+
+        Returns
+        -------
+        LLMResult
+            Output dictionary which contains the status of the function call and the response received from the Language Models.
+        """
+        try:
+            print("Can access")
+        except Exception as e:
+            self.logger.error(
+                """You have encountered the error:
                 {e}
                 This error is due to no response from the Gemini API.
                 Kindly check if you have hit the rate limit if you are using the free tier of Gemini API.

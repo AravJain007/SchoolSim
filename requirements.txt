@@ -1,0 +1,5 @@
+streamlit>=1.32.0
+pymongo>=4.7.0
+pydantic>=2.7.0
+markitdown>=0.0.1
+pypdf>=4.2.0
