@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from openai import AsyncClient
+from openai import AsyncClient, api_key
 from pydantic_classes import LLMCallResponseInput, LLMProvider, LLMResult
 
 load_dotenv()
@@ -18,11 +18,18 @@ class LLMCall:
         self.api_keys = {
             "gemini_api_key": os.getenv("GEMINI_API_KEY"),
             "lms_base_server": os.getenv("LMSTUDIO_SERVER_BASE_URL"),
+            "lightning_base_server": os.getenv("LIGHTNING_SERVER_BASE_URL"),
+            "lightning_api_key": os.getenv("LIGHTNING_STUDIO_API"),
         }
         self.logger = logging.getLogger(__name__)
         self.generation_function: dict[str, LLMProvider] = {
             "gemini": GeminiProvider(self.logger, self.api_keys["gemini_api_key"]),
             "lmstudio": LMStudioProvider(self.logger, self.api_keys["lms_base_server"]),
+            "lightning": LightningProvider(
+                self.logger,
+                self.api_keys["lightning_base_server"],
+                self.api_keys["lightning_api_key"],
+            ),
         }
 
     async def generate(self, response_input: LLMCallResponseInput) -> LLMResult:
@@ -125,13 +132,16 @@ class LMStudioProvider(LLMProvider):
             return LLMResult(status=500, response="")
 
 
-class vLLMProvider(LLMProvider):
+class LightningProvider(LLMProvider):
     def __init__(self, logger, base_url):
-        self.lms_client = AsyncClient(base_url=base_url, api_key="lm-studio")
+        self.lightning_client = AsyncClient(
+            base_url=base_url,
+            api_key=api_key,
+        )
         self.logger = logger
 
     async def generate(
-        self, input_prompt: str, model_name: str = "openai/gpt-oss-20b"
+        self, input_prompt: str, model_name: str = "lightning-ai/gpt-oss-20b"
     ) -> LLMResult:
         """Given function is to generate a response using Gemini series of models
 
@@ -148,7 +158,17 @@ class vLLMProvider(LLMProvider):
             Output dictionary which contains the status of the function call and the response received from the Language Models.
         """
         try:
-            print("Can access")
+            completion = self.lightning_client.chat.completions.create(
+                model=model_name,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": input_prompt}],
+                    },
+                ],
+            )
+            print(completion)
+            return LLMResult(status=200, response=completion.choices[0].message.content)
         except Exception as e:
             self.logger.error(
                 """You have encountered the error:

@@ -17,6 +17,7 @@ class LLMProvider(ABC):
 class Provider(str, Enum):
     GEMINI = "gemini"
     LMSTUDIO = "lmstudio"
+    LIGHTNING = "lightning"
 
 
 class LLMCallResponseInput(BaseModel):
