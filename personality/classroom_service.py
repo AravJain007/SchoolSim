@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import io
+import os
 from typing import Any, Dict, List, Optional
 
 import gridfs
 from bson import ObjectId
 from markitdown import MarkItDown
 from pymongo import MongoClient
-from sympy import Domain
 
 from pydantic_classes import ClassroomDetails, DomainScore, StudentDetails
 
@@ -56,12 +56,13 @@ class ClassroomService:
 
     def __init__(
         self,
-        mongo_uri: str = "mongodb://localhost:27017/",
         db_name: str = "b5",
         results_collection: str = "results",
     ):
         """Initializes the MongoDB client and database connections once."""
-        self.mongo_client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        self.mongo_client = MongoClient(
+            os.getenv("MONGO_SEVER"), serverSelectionTimeoutMS=5000
+        )
         self.db = self.mongo_client[db_name]
         self._col = self.db[results_collection]
         self._fs = gridfs.GridFS(self.db)

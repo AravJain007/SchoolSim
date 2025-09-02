@@ -6,20 +6,22 @@ from typing import Dict, List
 from pymongo import MongoClient
 from pymongo.results import InsertManyResult
 
+from llm_provider.creation_prompt import (
+    CHARACTER_IMPERSONATION_PROMPT,
+    RESUME_BIOGRAPHY_CREATION,
+)
 from llm_provider.llm_call import LLMCall
 from personality.classroom_service import ClassroomService
-from personality.creation_prompt import RESUME_BIOGRAPHY_CREATION
 from pydantic_classes import ClassroomDetails, LLMCallInput, Provider
 
 
 class CreatePersonalities:
-    def __init__(
-        self,
-        mongo_uri: str = "mongodb://localhost:27017/",
-    ):
+    def __init__(self):
         self.classroom_client = ClassroomService()
         self.llm_client = LLMCall()
-        self.db_client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+        self.db_client = MongoClient(
+            os.getenv("MONGO_SERVER"), serverSelectionTimeoutMS=5000
+        )
 
     def close_client(self):
         self.db_client.close()
@@ -27,7 +29,7 @@ class CreatePersonalities:
     def save_personality_prompt(
         self,
         biography_prompts: List[Dict],
-        collcetion: str,
+        collection: str,
         database_name: str = "personalities",
     ) -> InsertManyResult:
         """This function saves the personality of the user in the Mongo DB server
@@ -42,7 +44,7 @@ class CreatePersonalities:
             InsertManyResults
                 The IDs of the stored data
         """
-        result = self.db_client[database_name][collcetion].insert_many(
+        result = self.db_client[database_name][collection].insert_many(
             biography_prompts
         )
         return result
@@ -89,7 +91,11 @@ class CreatePersonalities:
                     "name": student.name,
                     "classroom": student.info["classLocation"],
                     "professor_name": student.info["teacherName"],
-                    "biography": biography.response,
+                    "prompt": CHARACTER_IMPERSONATION_PROMPT.format(
+                        name=student.name,
+                        big5_personality_text=student.personality_text,
+                        resume_text=biography.response,
+                    ),
                 }
             )
         return results

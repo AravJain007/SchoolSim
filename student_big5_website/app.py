@@ -1,3 +1,4 @@
+import os
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -15,12 +16,7 @@ def get_db():
 
     Reads configuration from Streamlit secrets first, then environment variables.
     """
-    mongo_uri = "mongodb://localhost:27017/"
-
-    if not mongo_uri:
-        return None
-
-    client = MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
+    client = MongoClient(os.getenv("MONGO_SERVER"), serverSelectionTimeoutMS=5000)
     db_name = "b5"
     return client[db_name]
 

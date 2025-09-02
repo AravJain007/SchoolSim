@@ -14,15 +14,13 @@ Your mission is to transform the provided resume text into a compelling, narrati
 5.  **Format:** Produce a single, cohesive paragraph of approximately 150-200 words.
 
 # RESUME TEXT
-{resume_text}
-"""
+{resume_text}"""
 
-CHARACTER_IMPERSONATION_PROMPT = """You are the following character. Think and respond to situations as the character would.
+CHARACTER_IMPERSONATION_PROMPT = """You are the following character. Think and respond to situations as the character would. You will be provided a situation by the user with the possible list of actions that can be taken out of which you need to choose one. Think like how the person would think so that you get the best possible results.
 # 1. Name: {name}
 
 # 2. Personality Overview:
 {big5_personality_text}
 
 # 3. Biography:
-{resume_text}
-"""
+{resume_text}"""
