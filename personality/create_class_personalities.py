@@ -1,7 +1,7 @@
 import asyncio
 import json
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from pymongo import MongoClient
 from pymongo.results import InsertManyResult
@@ -12,7 +12,7 @@ from llm_provider.creation_prompt import (
 )
 from llm_provider.llm_call import LLMCall
 from personality.classroom_service import ClassroomService
-from pydantic_classes import ClassroomDetails, LLMCallInput, Provider
+from pydantic_classes import ClassroomDetails, LLMCallInput, Provider, ReasoningEffort
 
 
 class CreatePersonalities:
@@ -73,10 +73,13 @@ class CreatePersonalities:
                 user_prompt_to_llm=user_prompt_to_gpt,
                 model_provider=Provider.LIGHTNING,
                 model_name="lightning-ai/gpt-oss-20b",
-                reasoning_effort="high",
+                reasoning_effort=ReasoningEffort.HIGH,
             )
             prompt_for_student_biographies.append(llm_input)
-        semaphores = asyncio.Semaphore(int(os.getenv("SEMAPHORE_COUNT")))
+        semaphore_count = os.getenv("SEMAPHORE_COUNT")
+        semaphores = asyncio.Semaphore(
+            int(semaphore_count) if semaphore_count is not None else 1
+        )
         llm_outputs = await asyncio.gather(
             *(
                 self.llm_client.generate(prompt, semaphores)
@@ -101,8 +104,8 @@ class CreatePersonalities:
         return results
 
     async def create_personalities(
-        self, class_number: str, professor_name: str, limit: int = None
-    ) -> InsertManyResult:
+        self, class_number: str, professor_name: str, limit: Optional[int] = None
+    ) -> List[Dict]:
         """This function using the ClassroomService to get the students information from MongoDB
 
         Parameters

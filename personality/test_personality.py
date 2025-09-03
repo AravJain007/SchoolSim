@@ -17,5 +17,5 @@ class TestPersonalityFolder:
     def test_create_personalities(self):
         classroom_details = classroom.get_classroom_details("SJT501", "Dr. B. Ashok")
         output = asyncio.run(create_personality.biography_creation(classroom_details))
-        output_id = create_personality.save_personality_prompt(output, "SJT501")
+        _ = create_personality.save_personality_prompt(output, "SJT501")
         print(output)

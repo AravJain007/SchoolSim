@@ -20,6 +20,13 @@ class Provider(str, Enum):
     LIGHTNING = "lightning"
 
 
+class ReasoningEffort(str, Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    MINIMAL = "minimal"
+
+
 class LLMCallInput(BaseModel):
     developer_prompt_provided: bool = Field(
         default=False, description="Have you provided a developer prompt"
@@ -44,8 +51,9 @@ class LLMCallInput(BaseModel):
     model_name: str = Field(
         ..., min_length=1, description="Name of the model available from the provider"
     )
-    reasoning_effort: str = Field(
-        default="high", description="Specifies the reasoning effort for the LLM"
+    reasoning_effort: ReasoningEffort = Field(
+        default=ReasoningEffort.HIGH,
+        description="Specifies the reasoning effort for the LLM",
     )
 
 
@@ -56,6 +64,9 @@ class LLMResult(BaseModel):
     )
     response: str | Any = Field(..., description="Response from the LLM")
     response_reasoning: str | Any = Field(..., description="Reasoning for response")
+    cost: Optional[float] = Field(
+        default=None, description="Cost of the call in US Dollars"
+    )
 
 
 class DomainScore(BaseModel):

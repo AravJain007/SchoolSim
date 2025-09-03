@@ -13,6 +13,15 @@ from pydantic_classes import LLMCallInput, LLMProvider, LLMResult
 
 load_dotenv()
 
+PROVIDER_COST: Dict[str, Dict[str, List[float]]] = {
+    "gemini": {
+        "gemini-2.5-pro": [1.25 / 1e6, 10 / 1e6],
+        "gemini-2.5-flash": [0.3 / 1e6, 2.5 / 1e6],
+        "gemini-2.5-flash-lite": [0.1 / 1e6, 0.40 / 1e6],
+    },
+    "lightning": {"lightning-ai/gpt-oss-20b": [0.05 / 1e6, 0.20 / 1e6]},
+}
+
 
 class LLMCall:
     def __init__(self) -> None:
@@ -59,7 +68,7 @@ class LLMCall:
                 return reply_from_llm
         except Exception as e:
             self.logger.error("Error:  {e}")
-            return LLMResult(status=400, response="")
+            return LLMResult(status=400, response="", response_reasoning="")
 
 
 class GeminiProvider(LLMProvider):
@@ -95,8 +104,16 @@ class GeminiProvider(LLMProvider):
             response = self.google_client.models.generate_content(
                 model=input_prompt.model_name, contents=messages
             )
+            cost_list = PROVIDER_COST["gemini"][input_prompt.model_name]
+            cost_of_call = (
+                cost_list[0] * response.usage_metadata.prompt_token_count
+                + cost_list[1] * response.usage_metadata.candidates_token_count
+            )
             return LLMResult(
-                status=200, response=response.text, response_reasoning="NA"
+                status=200,
+                response=response.text,
+                response_reasoning="NA",
+                cost=cost_of_call,
             )
         except Exception as e:
             self.logger.error(
@@ -133,7 +150,7 @@ class LightningProvider(LLMProvider):
             Output dictionary which contains the status of the function call and the response received from the Language Models.
         """
         try:
-            messages: List[Dict] = []
+            messages = []
             if input_prompt.system_prompt_provided:
                 messages.append(
                     {
@@ -168,10 +185,16 @@ class LightningProvider(LLMProvider):
                 messages=messages,
                 reasoning_effort=input_prompt.reasoning_effort,
             )
+            cost_list = PROVIDER_COST["lightning"][input_prompt.model_name]
+            cost_of_call = (
+                cost_list[0] * completion.usage.prompt_tokens
+                + cost_list[1] * completion.usage.completion_tokens
+            )
             return LLMResult(
                 status=200,
                 response=completion.choices[0].message.content,
                 response_reasoning=completion.choices[0].message.reasoning_content,
+                cost=cost_of_call,
             )
         except Exception as e:
             self.logger.error(

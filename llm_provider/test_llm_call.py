@@ -4,7 +4,7 @@ import pytest
 from sympy import false, true
 
 from llm_provider.llm_call import LLMCall
-from pydantic_classes import LLMCallInput, Provider
+from pydantic_classes import LLMCallInput, Provider, ReasoningEffort
 
 pytest_plugins = ("pytest_asyncio",)
 llm_call_class = LLMCall()
@@ -215,7 +215,7 @@ class TestLLMCall:
             user_prompt_to_llm=INPUT_PROMPT,
             model_provider=Provider.LIGHTNING,
             model_name="lightning-ai/gpt-oss-20b",
-            reasoning_effort="high",
+            reasoning_effort=ReasoningEffort.HIGH,
         )
         response = await llm_call_class.generate(input_to_function)
         print(
@@ -232,7 +232,7 @@ class TestLLMCall:
             system_prompt_to_llm=SYSTEM_PROMPT,
             developer_prompt_to_llm=DEVELOPER_PROMPT,
             user_prompt_to_llm="Tell me about yourself",
-            model_provider="gemini",
+            model_provider=Provider.GEMINI,
             model_name="gemini-2.5-flash-lite",
         )
         response = await llm_call_class.generate(input_to_function)
