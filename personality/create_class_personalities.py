@@ -77,15 +77,21 @@ class CreatePersonalities:
             )
             prompt_for_student_biographies.append(llm_input)
         semaphore_count = os.getenv("SEMAPHORE_COUNT")
-        semaphores = asyncio.Semaphore(
-            int(semaphore_count) if semaphore_count is not None else 1
-        )
-        llm_outputs = await asyncio.gather(
-            *(
-                self.llm_client.generate(prompt, semaphores)
-                for prompt in prompt_for_student_biographies
+        if semaphore_count is not None:
+            semaphore = asyncio.Semaphore(int(semaphore_count))
+            llm_outputs = await asyncio.gather(
+                *(
+                    self.llm_client.generate(prompt, semaphore)
+                    for prompt in prompt_for_student_biographies
+                )
             )
-        )
+        else:
+            llm_outputs = await asyncio.gather(
+                *(
+                    self.llm_client.generate(prompt)
+                    for prompt in prompt_for_student_biographies
+                )
+            )
         results = []
         for student, biography in zip(classroom_details.students, llm_outputs):
             print(biography.status)
@@ -97,7 +103,7 @@ class CreatePersonalities:
                     "prompt": CHARACTER_IMPERSONATION_PROMPT.format(
                         name=student.name,
                         big5_personality_text=student.personality_text,
-                        resume_text=biography.response,
+                        biography=biography.response,
                     ),
                 }
             )

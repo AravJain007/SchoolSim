@@ -1,8 +1,8 @@
 import logging
 import os
-from ast import Dict, List
 from asyncio import Semaphore
 from email import message
+from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 from google import genai
@@ -46,14 +46,16 @@ class LLMCall:
         }
 
     async def generate(
-        self, input_to_llm: LLMCallInput, semaphore: Semaphore = Semaphore(1)
+        self, input_to_llm: LLMCallInput, semaphore: Optional[Semaphore] = None
     ) -> LLMResult:
         """This function is to get a response from a LLM or a SLM based on the provider and model input provided.
 
         Parameters
         ----------
-        input_to_llm :  LLMCallInput
-            This is a PyDantic Class which keeps input in check. Contains user_prompt_to_llm (str), model_provider (Literal["google", "openai", "anthropic", "vllm", "ollama", "custom"]) and model_name (str).
+        input_to_llm : LLMCallInput
+            This is a PyDantic Class which keeps input in check.
+        semaphore : Optional[Semaphore]
+            Semaphore for controlling concurrency. If None, no concurrency control is applied.
 
         Returns
         -------
@@ -61,14 +63,24 @@ class LLMCall:
             Dictionary containing ``status`` and the textual ``response``.
         """
         try:
-            async with semaphore:
+            if semaphore is not None:
+                async with semaphore:
+                    reply_from_llm = await self.generation_function[
+                        input_to_llm.model_provider
+                    ].generate(input_to_llm)
+            else:
+                # No semaphore control - run without concurrency limits
                 reply_from_llm = await self.generation_function[
                     input_to_llm.model_provider
                 ].generate(input_to_llm)
-                return reply_from_llm
-        except Exception as e:
-            self.logger.error("Error:  {e}")
-            return LLMResult(status=400, response="", response_reasoning="")
+
+            return reply_from_llm
+
+        except KeyError as e:
+            self.logger.error(f"Unknown model provider: {e}")
+            return LLMResult(
+                status=400, response="", response_reasoning="Unknown provider"
+            )
 
 
 class GeminiProvider(LLMProvider):
