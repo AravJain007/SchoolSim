@@ -107,7 +107,7 @@ The invention provides the following technical advantages over existing systems:
 
 ## BRIEF DESCRIPTION OF THE DRAWINGS
 
-**Figure 1:** System architecture diagram showing the relationship between input components (personality assessments, resumes, course materials), processing modules (agent generators, material parser, simulation engine), and output components (aggregated report, quiz generator).
+**Figure 1:** System architecture diagram showing the relationship between input components (personality assessments, resumes, course materials), processing modules (agent generators, material parser, simulation engine), and output components (aggregated report).
 
 **Figure 2:** Flowchart depicting the complete simulation workflow from material upload through multi-run execution to aggregated report generation.
 
@@ -230,15 +230,18 @@ a) **Multi-Format Support**: Accepts PDF, PowerPoint (PPT/PPTX), and Word (DOC/D
 
 b) **Text Extraction**: Uses appropriate libraries to extract text content from each format
 
-c) **Content Chunking**: Segments extracted content into logical teaching units based on:
-   - Heading structure and hierarchy
-   - Paragraph boundaries
-   - Topic transitions
-   - Semantic coherence
+c) **Semantic Density Chunking**: Segments extracted content into logical teaching units based on cognitive load rather than structural boundaries:
+   - New terminology count (+5 load per new term)
+   - Formula/code presence (+10 load)
+   - Abstract concept density (+8 load)
+   - Flesch-Kincaid difficulty (scaled load)
+   - Accumulates load per paragraph until threshold (e.g., 50) then starts new chunk
 
 d) **Topic Labeling**: Assigns descriptive labels to each chunk for reference during simulation
 
 e) **Concept Extraction**: Identifies key concepts, definitions, and relationships within the material
+
+f) **Knowledge Structure Mapping**: Extracts prerequisite dependencies between concepts for KLI Framework analysis
 
 #### 5. Simulation Engine
 
@@ -256,16 +259,18 @@ Each simulation session follows this structure:
 
 2. **Teaching Cycle** (repeated for each material segment)
    - Teacher agent delivers content segment
-   - System pauses for doubt opportunity
-   - Randomly selected students evaluate whether to ask a doubt (using personality-driven decision process)
-   - Students who choose to ask submit their doubts
+   - **All student agents rate understanding (1-5 Expanded Scale)**
+   - Students with understanding ≤ 2 AND fatigue < 80 are candidates for doubt-asking
+   - Selected students submit their doubts
    - Teacher agent responds to doubts based on personality
-   - Principal agent observes and takes notes
+   - **Asker re-rates understanding (IRF Check)** - if improved, R+ = 1; else R+ = 0
+   - **Principal agent checks KLI alignment** for this chunk
+   - **CIE State Update**: fatigue += 5, cognitive_load += chunk.density * 0.2
 
 3. **Session Conclusion**
    - Teacher agent concludes the material
-   - Principal agent generates session observations
-   - All interactions are logged with metadata
+   - Principal agent generates session observations with **KLI alignment summary**
+   - All interactions are logged with metadata including CIE state trajectories
 
 ##### 5.2 Doubt Decision Process
 
@@ -343,19 +348,6 @@ Generate structured validation report including:
 - **Focus Areas**: Topics requiring more explanation time
 - **Shortening Candidates**: Topics receiving little engagement that may be condensed
 
-#### 7. Quiz Generation Module
-
-The system generates assessment quizzes from course materials:
-
-a) **Concept Coverage**: Ensure quiz covers all key concepts identified in material parsing
-
-b) **Bloom's Level Distribution**: Generate questions at appropriate cognitive levels
-
-c) **Unified Assessment**: Create single quiz for all students enabling fair comparison
-
-d) **Individual Analysis**: Track per-student performance to identify individual weak areas
-
-e) **Aggregate Analysis**: Identify class-wide patterns in quiz performance
 
 ### Method Claims
 
@@ -451,6 +443,97 @@ A computer-implemented method for pedagogical analysis of simulated teaching int
 
 (f) aggregating observer findings across multiple simulation sessions to identify consistent pedagogical issues.
 
+#### Method 5: Cognitive State Evolution (CIE Architecture)
+
+A computer-implemented method for simulating realistic student learning dynamics, comprising:
+
+(a) initializing student agents with baseline personality profiles and cognitive state variables including fatigue level, cognitive load, and understanding score;
+
+(b) updating said cognitive state variables after each teaching segment using deterministic rules, wherein:
+   - fatigue increases by a fixed increment after each segment,
+   - cognitive load increases proportionally to the semantic density of the segment,
+   - understanding score is output by the language model on a 1-5 scale;
+
+(c) modifying student agent behavior based on current cognitive state, wherein:
+   - students with understanding ≤ 2 are candidates for doubt-asking,
+   - students with fatigue ≥ 80 are excluded from doubt-asking regardless of understanding,
+   - high cognitive load reduces question complexity;
+
+(d) tracking cognitive state trajectories across the teaching session to identify cognitive breaking points in the material.
+
+#### Method 6: IRF-Based Teaching Effectiveness Measurement
+
+A computer-implemented method for quantitatively measuring teaching effectiveness, comprising:
+
+(a) identifying Initiation-Response-Feedback (IRF) sequences in simulated teaching interactions, wherein:
+   - Initiation is the teacher's content delivery,
+   - Response is the student's doubt or question,
+   - Feedback is the teacher's response to the doubt;
+
+(b) measuring student understanding score before and after each IRF sequence using the 1-5 Expanded Scale;
+
+(c) classifying interactions as positive transitions (R+) when student understanding increases by at least one level;
+
+(d) calculating positive transition rate (R+) per material segment as the ratio of positive transitions to total doubt interactions;
+
+(e) flagging segments with R+ below a configurable threshold as ineffective teaching requiring redesign.
+
+#### Method 7: KLI-Framework Pedagogical Alignment Analysis
+
+A computer-implemented method for analyzing instructional alignment, comprising:
+
+(a) extracting knowledge structure from course materials, including concepts, prerequisites, and dependencies;
+
+(b) identifying learning processes required for concept acquisition (exposure, practice, application);
+
+(c) analyzing instructional methods used in simulated teaching (direct explanation, analogy, demonstration, exercise);
+
+(d) computing alignment score between instructional methods and required learning processes;
+
+(e) flagging misalignments where instructional method does not support required learning process (e.g., lecture used for practice-required content);
+
+(f) generating specific suggestions for alternative instructional methods.
+
+#### Method 8: Semantic Density Chunking
+
+A computer-implemented method for segmenting educational content based on cognitive load, comprising:
+
+(a) parsing course material into individual paragraphs or sentences;
+
+(b) calculating cognitive load score for each unit based on:
+   - count of new terminology introduced,
+   - presence of formulas or code,
+   - abstraction level of concepts,
+   - Flesch-Kincaid readability difficulty;
+
+(c) accumulating cognitive load scores until a configurable threshold is reached;
+
+(d) creating a new content chunk when the threshold is exceeded;
+
+(e) associating each chunk with its cumulative semantic density score for use in simulation state updates.
+
+#### Method 9: Heatmap Visualization with Annotations
+
+A computer-implemented method for generating actionable visual feedback on course materials, comprising:
+
+(a) mapping aggregated simulation results to original document page ranges;
+
+(b) computing color classification for each segment based on average understanding score:
+   - Red for average understanding < 2 (critical confusion),
+   - Orange for average understanding < 3 (caution),
+   - Green for average understanding ≥ 3 (clear);
+
+(c) overlaying semi-transparent color regions on the original document pages;
+
+(d) for segments classified as Red or Orange, generating a textual annotation containing:
+   - failure rate percentage,
+   - principal agent's specific improvement suggestion,
+   - identified missing prerequisites;
+
+(e) appending said annotation as a footer or margin note on the corresponding document page;
+
+(f) outputting the annotated document for teacher review.
+
 ### System Claims
 
 The present invention implements the following system components:
@@ -512,35 +595,38 @@ The following dependent claims provide additional specificity:
 
 **Claim D7:** The method of Claim 4, wherein the Bloom's Taxonomy classification identifies the highest cognitive level reached in student questions and teacher explanations.
 
-**Claim D8:** The system of Claim 1, further comprising a quiz generation module that creates unified assessments from course materials covering all identified key concepts with questions distributed across Bloom's Taxonomy cognitive levels.
+**Claim D8:** The method of Claim 1, further comprising a feedback loop wherein the material validation report informs material revisions, and the revised materials are re-simulated to validate improvements.
 
-**Claim D9:** The method of Claim 1, further comprising a feedback loop wherein the material validation report informs material revisions, and the revised materials are re-simulated to validate improvements.
-
-**Claim D10:** The method of Claim 1, wherein the course material parsing supports at least PDF, PowerPoint, and Word document formats and automatically segments content based on heading structure, paragraph boundaries, and semantic coherence.
+**Claim D9:** The method of Claim 1, wherein the course material parsing supports at least PDF, PowerPoint, and Word document formats and automatically segments content based on heading structure, paragraph boundaries, and semantic coherence.
 
 ---
 
 ## ABSTRACT
 
-A computer-implemented system and method for pre-teaching validation of educational materials using multi-agent classroom simulation. The system generates personality-driven AI agents for teachers and students using Big Five psychological assessments and resume-derived professional biographies. A teacher agent delivers course content with personality-influenced teaching style while student agents probabilistically decide whether to ask doubts based on their individual personality profiles. A pedagogical observer agent monitors interactions using Bloom's Taxonomy and Flesch-Kincaid analysis. The system executes multiple stochastic simulation sessions with random student subset selection and aggregates findings to identify statistically significant patterns including common student doubts, problematic content areas, and material improvement suggestions. Unlike real-time tutoring systems, the invention enables teachers to predict and prevent teaching problems before actual classroom delivery.
+A computer-implemented system and method for pre-teaching validation of educational materials using multi-agent classroom simulation. The system generates personality-driven AI agents for teachers and students using Big Five psychological assessments and resume-derived professional biographies. Student agents incorporate a Cognition-Interaction-Evolution (CIE) architecture with evolving cognitive states including fatigue, cognitive load, and understanding scores rated on a 1-5 Expanded Scale after each teaching segment. A teacher agent delivers course content with personality-influenced teaching style while student agents decide whether to ask doubts based on their understanding score and fatigue threshold. A pedagogical observer agent monitors interactions using the Knowledge-Learning-Instruction (KLI) Framework to detect alignment between content type, learning process requirements, and instructional methods. The system parses course materials using Semantic Density Chunking based on cognitive load rather than structural boundaries. Teaching effectiveness is measured using IRF R+ metrics that track whether student understanding improves after teacher responses to doubts. The system executes multiple stochastic simulation sessions with random student subset selection and aggregates findings to identify statistically significant patterns. Output includes a Heatmap Visualization overlaying the original course materials with color-coded confusion zones and footer annotations containing specific improvement suggestions. Unlike real-time tutoring systems, the invention enables teachers to predict and prevent teaching problems before actual classroom delivery.
 
 ---
 
 ## CLAIMS SUMMARY
 
-### Independent Claims Count: 4
+### Independent Claims Count: 9
 1. Pre-Teaching Material Validation Method
 2. Personality-Driven Agent Generation Method
 3. Multi-Run Stochastic Aggregation Method
 4. Pedagogical Observer Analysis Method
+5. **Cognitive State Evolution (CIE Architecture) Method**
+6. **IRF-Based Teaching Effectiveness Measurement Method**
+7. **KLI-Framework Pedagogical Alignment Analysis Method**
+8. **Semantic Density Chunking Method**
+9. **Heatmap Visualization with Annotations Method**
 
 ### System Claims Count: 2
 1. Multi-Agent Simulation System
 2. LLM Provider Abstraction System
 
-### Dependent Claims Count: 10
+### Dependent Claims Count: 9
 
-### Total Claims: 16
+### Total Claims: 20
 
 ---
 

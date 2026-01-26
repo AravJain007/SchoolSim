@@ -2,7 +2,7 @@
 
 ## Core Idea
 
-A smart classroom simulation system where LLMs imitate teachers, students, and a principal. Real teachers input their course material. The system simulates teaching sessions with personality-driven agents (both teacher and students) who interact realistically. A principal agent observes and provides pedagogical feedback. Additionally, a unified quiz is generated for all students based on the syllabus to assess understanding.
+A smart classroom simulation system where LLMs imitate teachers, students, and a principal. Real teachers input their course material. The system simulates teaching sessions with personality-driven agents (both teacher and students) who interact realistically. A principal agent observes and provides pedagogical feedback.
 
 ---
 
@@ -24,17 +24,6 @@ A smart classroom simulation system where LLMs imitate teachers, students, and a
 9. An aggregator analyzes common patterns across all runs
 10. Output: Suggestions to improve material, predicted common doubts, focus areas
 
-### Module 2: Quiz System (For Student Assessment)
-
-**Goal:** Create a holistic test to assess student understanding based on syllabus.
-
-**Flow:**
-1. Teacher inputs the day's teaching material/syllabus
-2. System generates one unified quiz that tests all key concepts from the syllabus
-3. All students of the class attempt the same quiz via a web interface
-4. System provides individual analysis per student
-5. System provides aggregate analysis to the teacher
-6. Teacher identifies weak areas and adjusts future teaching
 
 ---
 
@@ -45,16 +34,9 @@ A smart classroom simulation system where LLMs imitate teachers, students, and a
 | Stage | Details |
 |-------|---------|
 | **Input** | Teacher personality (Big5), course material (PDF/PPT/DOC), class name (to retrieve students), number of simulation runs |
-| **Processing** | 1. Parse course material into teachable chunks<br>2. Generate teacher agent prompt using teacher's Big5 personality<br>3. Fetch student personalities from database using class name<br>4. Run teach-doubt cycles with random student selection per run<br>5. Students decide to ask doubts based on personality<br>6. Principal observes and notes issues<br>7. Aggregator combines findings from all runs |
-| **Output** | List of common doubts, material improvement suggestions, areas needing more focus, areas that can be shortened |
+| **Processing** | 1. Parse course material using **Semantic Density Chunking** (splits by cognitive load, not just paragraphs)<br>2. Generate teacher agent prompt using teacher's Big5 personality<br>3. Fetch student personalities from database using class name<br>4. **Initialize student CIE states** (fatigue=0, cognitive_load=0, understanding=3)<br>5. Run teach-doubt cycles: teacher explains chunk → **all students rate understanding (1-5)** → students with score ≤2 and fatigue <80 may ask doubts<br>6. Teacher answers doubt → **check if asker's understanding improved (IRF R+ metric)**<br>7. **Principal checks KLI alignment** per chunk (Knowledge structure, Learning process, Instruction match)<br>8. **Update CIE states** after each chunk (fatigue += 5)<br>9. Aggregator combines findings from all runs, detects **systemic gaps** (40%+ failure rate) |
+| **Output** | **Heatmap** (PDF/PPT with Red/Orange/Green overlays + footer remarks), Gap Report, Principal's KLI summary, common doubts |
 
-### Quiz System
-
-| Stage | Details |
-|-------|---------|
-| **Input** | Day's teaching material/syllabus |
-| **Processing** | 1. Parse material into key concepts<br>2. Generate unified quiz covering all concepts holistically<br>3. All students attempt same quiz<br>4. Analyze individual and aggregate performance |
-| **Output** | Per-student analysis (strengths, weaknesses), class-wide analysis (common misconceptions, topics to revisit) |
 
 ---
 
@@ -64,15 +46,22 @@ A smart classroom simulation system where LLMs imitate teachers, students, and a
 
 2. **Pre-Teaching Material Validation:** Teachers can test their material on a simulated classroom before facing real students. This is predictive pedagogy.
 
-3. **Principal as Pedagogical Observer:** An LLM agent specifically trained on teaching methodologies observes the simulation and provides research-backed suggestions.
+3. **CIE Architecture (Cognition-Interaction-Evolution):** Students have evolving cognitive states (fatigue, cognitive load, understanding) that change during the session. A tired student stops asking questions even if confused. This models real classroom dynamics.
 
-4. **Aggregation Across Multiple Runs:** Teacher chooses number of runs. Each run has completely random student selection. Aggregating findings across runs produces statistically meaningful insights.
+4. **Expanded Scale Format (1-5):** Every student rates their understanding after every chunk (1=lost, 5=clear). This prevents "acquiescence bias" where LLMs politely claim understanding.
 
-5. **Holistic Syllabus-Based Assessment:** Quizzes are generated from syllabus to comprehensively test all key concepts. Same quiz for all students enables fair comparison and identification of class-wide weak spots.
+5. **KLI Framework Principal:** The Principal agent checks alignment between Knowledge structure (prerequisites), Learning processes (exposure vs. practice), and Instruction methods (lecture vs. demo). Identifies mismatches like "You used a lecture for a coding exercise."
 
-6. **Closed Feedback Loop:** Simulation insights → material improvement → better teaching → quiz feedback → further refinement. The system creates a continuous improvement cycle.
+6. **IRF R+ Metrics:** Measures teaching effectiveness by checking if a student's understanding improved after teacher's response to a doubt. Flags segments where explanations don't resolve confusion.
 
-7. **Dual Benefit System:** Teachers benefit from simulation (before teaching) AND from quiz analysis (after teaching). Students benefit from targeted teaching based on identified weak areas.
+7. **Semantic Density Chunking:** Material is split by cognitive load (new terms, formulas, abstraction level) rather than just paragraphs. Prevents overwhelming students with dense sections.
+
+8. **Heatmap Visualization with Remarks:** Outputs the original PDF/PPT with color overlays (Red=critical, Orange=caution, Green=clear) AND footer annotations showing the specific issue and improvement suggestion.
+
+9. **Aggregation Across Multiple Runs:** Teacher chooses number of runs. Each run has completely random student selection. Aggregating findings across runs produces statistically meaningful insights. Gaps flagged only if 40%+ of runs show failure.
+
+
+10. **Closed Feedback Loop:** Simulation insights → material improvement → better teaching → further refinement. The system creates a continuous improvement cycle.
 
 ---
 
@@ -81,10 +70,16 @@ A smart classroom simulation system where LLMs imitate teachers, students, and a
 - Uses Big5 psychological model for both teacher and students
 - Professional biography extraction from resumes to create realistic student personas
 - Teacher personality influences teaching style, explanation depth, and doubt handling
+- **CIE cognitive state variables** (fatigue, cognitive_load, understanding) with deterministic update rules
+- **Expanded Scale (1-5)** for every student after every chunk to prevent acquiescence bias
 - Character impersonation prompts that maintain behavioral consistency
 - Multi-agent orchestration (teacher, students, principal) with role-specific system prompts
-- Probabilistic doubt-asking based on personality traits (not random)
+- **Doubt selection based on understanding score + fatigue threshold**, not just personality
+- **KLI Framework** for Principal agent (Knowledge-Learning-Instruction alignment checking)
+- **IRF R+ metric** to measure if doubts were actually resolved
+- **Semantic Density Chunking** algorithm (cognitive load-based material segmentation)
 - Pedagogical analysis using established frameworks (Bloom's Taxonomy, Flesch-Kincaid)
+- **Heatmap generation with footer annotations** on original course materials
 - Randomized multi-run simulations with configurable run count
 
 ---
@@ -101,12 +96,15 @@ A smart classroom simulation system where LLMs imitate teachers, students, and a
 
 - Teacher personality prompt generation (using existing Big5 infrastructure)
 - Teacher agent implementation
-- Principal agent implementation
-- Course material parser
+- **Student agent with CIE cognitive state management**
+- **Principal agent with KLI Framework prompts**
+- **Semantic Density Chunker** for course material parsing
 - Simulation setup screen (class selection, run count)
-- Full simulation orchestration with multi-run support
-- Aggregator for multi-run analysis
-- Quiz generation system (unified quiz from syllabus)
+- Full simulation orchestration with **1-5 scale collection** and **CIE state updates**
+- **IRF R+ metric calculation** in aggregator
+- **Gap Detection** (40% threshold) in aggregator
+- **Heatmap Generator + Annotation Writer** for output
+
 - Frontend: simulation chat interface
-- Frontend: quiz interface for students
-- Frontend: teacher dashboard with analysis
+
+- Frontend: teacher dashboard with analysis + heatmap viewer
