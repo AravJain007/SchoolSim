@@ -126,47 +126,51 @@ Principal Note: "Consider adding a live coding demo or practice problem."
 
 ---
 
-## 3. Material Processing (Semantic Density Chunking)
+## 3. Material Processing (Structural Chunking)
 
-**Goal:** Split material by cognitive load, not just structure.
+**Goal:** Split material by structure for easy annotation mapping. Semantic density will be discovered empirically through simulation.
 
-**Algorithm (Sliding Window):**
+**Chunking Logic:**
+- **For PPTs:** 1 slide = 1 chunk
+- **For PDFs/DOCs:** 1 page or 1 paragraph = 1 chunk
+
+**Rationale:** This structural approach ensures that when we identify difficult parts where students had doubts, we can easily map those remarks back to specific slides or pages for annotation. The simulation will empirically discover difficulty through student understanding scores, rather than pre-computing semantic density via NLP.
+
+**Algorithm:**
 ```python
-def chunk_by_cognitive_load(document, max_load=50):
+def parse_document(file_path: str) -> List[ChunkDetails]:
+    # For PPTs: Extract each slide as a separate chunk
+    # For PDFs: Extract each page as a separate chunk
+    # For DOCs: Extract each paragraph as a separate chunk
+
     chunks = []
-    current_chunk = []
-    current_load = 0
-
-    for paragraph in document.paragraphs:
-        para_load = calculate_load(paragraph)
-        # Load factors:
-        # - New terminology count (+5 per new term)
-        # - Formula/code presence (+10)
-        # - Abstract concepts (+8)
-        # - Flesch-Kincaid difficulty (+scaled)
-
-        if current_load + para_load > max_load:
-            chunks.append(current_chunk)
-            current_chunk = [paragraph]
-            current_load = para_load
-        else:
-            current_chunk.append(paragraph)
-            current_load += para_load
-
-    chunks.append(current_chunk)  # Don't forget last chunk
+    for idx, content_unit in enumerate(document_units, start=1):
+        chunk = ChunkDetails(
+            chunk_id=f"chunk_{idx}",
+            content=content_unit,
+            page_range=f"Slide {idx}" if is_ppt else f"Page {idx}",
+            difficulty_index=0.0,  # Placeholder - populated post-simulation
+            has_formula=detect_formulas(content_unit),
+            has_code=detect_code(content_unit)
+        )
+        chunks.append(chunk)
     return chunks
 ```
 
 **Output:**
 ```json
 {
-  "chunk_id": "C003",
+  "chunk_id": "chunk_3",
   "content": "...",
-  "semantic_density": 45,
+  "difficulty_index": 0.0,
   "new_terms": ["recursion", "base_case"],
-  "page_range": "Slide 5-6"
+  "page_range": "Slide 3",
+  "has_formula": true,
+  "has_code": false
 }
 ```
+
+**Note:** The `difficulty_index` field in chunk output will be populated **after simulation** based on student understanding scores, not pre-computed via NLP. This allows the simulation to empirically discover which chunks are difficult rather than making assumptions upfront.
 
 ---
 
@@ -197,16 +201,39 @@ FOR each chunk in material:
 
     7. UPDATE all student cognitive states
        -> fatigue += 5
-       -> cognitive_load += chunk.semantic_density * 0.2
+       -> cognitive_load += chunk.difficulty_index * 0.2
 END FOR
 ```
 
 ### 4.2 Multi-Run Aggregation
+
+**Random Student Subset Selection:**
+
+Each run uses a randomly selected subset of students (NOT the full class). This ensures statistical variance and exposes different failure modes across runs.
+
+```python
+# Subset Selection Rules:
+# - Sample between 50-100% of class size per run
+# - Minimum 5 students regardless of class size
+
+def calculate_sample_range(total_students: int) -> tuple[int, int]:
+    min_sample = max(5, int(total_students * 0.5))
+    max_sample = total_students
+    return (min_sample, max_sample)
+
+# Example: Class of 100 students → sample 50-100 students per run
+# Example: Class of 20 students  → sample 10-20 students per run
+```
+
+**Multi-Run Loop:**
 ```
 FOR each run (1 to N):
-    - Randomly sample subset of students from class
-    - Execute Single Run Flow
-    - Store all outputs
+    1. Calculate sample range: (min, max) = calculate_sample_range(class_size)
+    2. Pick random sample_size between min and max
+    3. Randomly select sample_size students from class
+    4. Execute Single Run Flow with selected students
+    5. Record students_selected in SimulationRun output
+    6. Store all outputs
 END FOR
 
 AGGREGATE:

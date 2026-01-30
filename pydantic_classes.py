@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
+from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -105,4 +106,130 @@ class PersonalitiesOfStudents(BaseModel):
     )
     personalities_of_students: List[str] = Field(
         ..., description="Prompt containing the personality details of the student"
+    )
+
+
+class ChunkDetails(BaseModel):
+    chunk_id: str = Field(..., description="Unique identifier for the chunk")
+    content: str = Field(..., description="Content of the chunk")
+    difficulty_index: Optional[float] = Field(
+        default=0.0,
+        ge=0,
+        le=100,
+        description="Semantic density on 0-100 scale (populated post-simulation based on student understanding scores)",
+    )
+    new_terms: List[str] = Field(
+        default_factory=list, description="List of new terms in the chunk"
+    )
+    page_range: str = Field(..., description="Page range (e.g., 'Slide 3' or 'Page 2')")
+    has_formula: bool = Field(
+        default=False, description="Whether the chunk contains formulas"
+    )
+    has_code: bool = Field(default=False, description="Whether the chunk contains code")
+
+
+class CognitiveState(BaseModel):
+    fatigue: int = Field(
+        default=0,
+        ge=0,
+        description="Fatigue level (starts at 0, increases by 5 per chunk)",
+    )
+    cognitive_load: int = Field(
+        default=0, ge=0, description="Cognitive load (increases based on chunk density)"
+    )
+    understanding: int = Field(
+        default=3, ge=1, le=5, description="Understanding level on 1-5 scale"
+    )
+
+
+class StudentAgentState(BaseModel):
+    student_id: str = Field(..., description="Unique identifier for the student")
+    name: str = Field(..., description="Student name")
+    personality_prompt: str = Field(
+        ..., description="Personality prompt for the student agent"
+    )
+    cognitive_state: CognitiveState = Field(..., description="Current cognitive state")
+    doubts_asked: List[str] = Field(
+        default_factory=list, description="List of doubts asked by the student"
+    )
+
+
+class TeacherAgentConfig(BaseModel):
+    teacher_id: str = Field(..., description="Unique identifier for the teacher")
+    name: str = Field(..., description="Teacher name")
+    personality_prompt: str = Field(
+        ..., description="Personality prompt for the teacher agent"
+    )
+    big5_scores: Dict[str, int] = Field(
+        ..., description="Big Five personality scores (O, C, E, A, N)"
+    )
+
+
+class TeachingOutput(BaseModel):
+    chunk_id: str = Field(..., description="Chunk identifier")
+    teaching_transcript: str = Field(
+        ..., description="Transcript of the teaching session"
+    )
+    teaching_method_used: Literal[
+        "direct_explanation", "analogy", "example", "question"
+    ] = Field(..., description="Teaching method used")
+
+
+class StudentResponse(BaseModel):
+    student_id: str = Field(..., description="Student identifier")
+    chunk_id: str = Field(..., description="Chunk identifier")
+    understanding_before: int = Field(
+        ..., ge=1, le=5, description="Understanding level before teaching (1-5)"
+    )
+    understanding_after: int = Field(
+        ..., ge=1, le=5, description="Understanding level after teaching (1-5)"
+    )
+    doubt_asked: Optional[str] = Field(
+        default=None, description="Doubt asked by the student"
+    )
+    doubt_resolved: Optional[bool] = Field(
+        default=None, description="Whether the doubt was resolved"
+    )
+
+
+class PrincipalAnalysis(BaseModel):
+    chunk_id: str = Field(..., description="Chunk identifier")
+    alignment_score: float = Field(..., ge=0, le=1, description="Alignment score (0-1)")
+    missing_prerequisites: List[str] = Field(
+        default_factory=list, description="List of missing prerequisites"
+    )
+    suggested_methods: List[str] = Field(
+        default_factory=list, description="Suggested teaching methods"
+    )
+    notes: str = Field(default="", description="Additional notes")
+
+
+class SimulationRun(BaseModel):
+    run_id: str = Field(..., description="Unique identifier for the simulation run")
+    timestamp: datetime = Field(..., description="Timestamp of the simulation run")
+    teacher_config: TeacherAgentConfig = Field(..., description="Teacher configuration")
+    students_selected: List[str] = Field(
+        ..., description="List of selected student IDs"
+    )
+    chunk_results: List[Dict[str, Any]] = Field(
+        ..., description="Per-chunk results data"
+    )
+    principal_summary: PrincipalAnalysis = Field(
+        ..., description="Principal's analysis summary"
+    )
+
+
+class AggregatedResults(BaseModel):
+    total_runs: int = Field(..., ge=0, description="Total number of simulation runs")
+    per_chunk_avg_understanding: Dict[str, float] = Field(
+        ..., description="Average understanding per chunk"
+    )
+    gap_chunks: List[str] = Field(
+        default_factory=list, description="Chunks with >40% failure rate"
+    )
+    common_doubts: Dict[str, List[str]] = Field(
+        default_factory=dict, description="Common doubts organized by chunk"
+    )
+    principal_notes: List[str] = Field(
+        default_factory=list, description="Principal's notes"
     )
