@@ -34,7 +34,6 @@ async def main():
         change type after they have been set.
         """,
         difficulty_index=25.0,
-        new_terms=["variable", "data type", "assignment"],
         page_range="Slide 3",
         has_formula=False,
         has_code=True,

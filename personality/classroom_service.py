@@ -1,47 +1,11 @@
 from __future__ import annotations
 
-import io
 import os
 from typing import Any, Dict, List, Optional
 
-import gridfs
-from bson import ObjectId
-from markitdown import MarkItDown
 from pymongo import MongoClient
 
 from pydantic_classes import ClassroomDetails, DomainScore, StudentDetails
-
-
-def _parse_resume_from_pdf_bytes(pdf_bytes: bytes) -> Optional[str]:
-    """Extract text from a PDF resume. Attempts to use MarkItDown first, then falls back to PyPDF.
-    Returns plain text (or markdown) if extracted, else None.
-    """
-    try:
-        md = MarkItDown()
-        result = md.convert_stream(io.BytesIO(pdf_bytes))
-        text_content: Optional[str] = result.text_content
-
-        if text_content:
-            return text_content.strip()
-    except Exception as e:
-        print("Using markitdown did not work")
-        pass
-
-    # Fallback: PyPDF text extraction
-    try:
-        from pypdf import PdfReader  # type: ignore
-
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        pages_text: List[str] = []
-        for page in reader.pages:
-            try:
-                pages_text.append(page.extract_text() or "")
-            except Exception:
-                pages_text.append("")
-        text = "\n\n".join(t for t in pages_text if t)
-        return text.strip() if text else None
-    except Exception:
-        return None
 
 
 class ClassroomService:
@@ -50,8 +14,7 @@ class ClassroomService:
     This service expects documents shaped like the ones saved by `app.py`:
     - Collection: b5.results
     - Each document includes `userName`, `collegeId`, `teacherName`, `classLocation`,
-      `resultSummary` (per-domain details including `title` and `resultText`), and
-      `resume.fileId` (GridFS id).
+      and `resultSummary` (per-domain details including `title` and `resultText`).
     """
 
     def __init__(
@@ -61,11 +24,10 @@ class ClassroomService:
     ):
         """Initializes the MongoDB client and database connections once."""
         self.mongo_client = MongoClient(
-            os.getenv("MONGO_SEVER"), serverSelectionTimeoutMS=5000
+            os.getenv("MONGO_SERVER"), serverSelectionTimeoutMS=5000
         )
         self.db = self.mongo_client[db_name]
         self._col = self.db[results_collection]
-        self._fs = gridfs.GridFS(self.db)
         print("MongoDB client initialized.")
 
     def close_client(self):
@@ -73,7 +35,6 @@ class ClassroomService:
         self.mongo_client.close()
         print("MongoDB client closed.")
 
-    # Implement context manager for automatic connection closing
     def __enter__(self):
         return self
 
@@ -118,7 +79,7 @@ class ClassroomService:
                 domain_result_text = domain_data.get("resultText")
                 domain_result = domain_data.get("result")
                 domain_score = domain_data.get("score")
-                domain_count = domain_data.get("count") * 5
+                domain_count = (domain_data.get("count") or 20) * 5
                 personality_text += f"""### {index}. {domain_title}\n- Score: {domain_score} out of {domain_count}, which is a {domain_result} score.\n- Definition: {domain_result_text}\n- Facets:\n"""
                 facet = domain_data.get("facets")
                 facet_score_dictionary = {}
@@ -127,24 +88,12 @@ class ClassroomService:
                     facet_score = facet_data.get("score")
                     facet_title = facet_data.get("title")
                     facet_result = facet_data.get("result")
-                    facet_count = facet_data.get("count") * 5
+                    facet_count = (facet_data.get("count") or 4) * 5
                     facet_score_dictionary[facet_title] = facet_score
                     personality_text += f"""\t- {facet_title}: {facet_description} Your score is {facet_score} out of {facet_count} which is {facet_result}.\n"""
                 domain_results.append(
                     DomainScore(score=domain_score, facet_scores=facet_score_dictionary)
                 )
-
-            # Get resume text from GridFS when available
-            resume_text: Optional[str] = None
-            resume_info: Dict[str, Any] = doc.get("resume", {}) or {}
-            file_id_str: Optional[str] = resume_info.get("fileId") or None
-            if file_id_str:
-                try:
-                    file_obj = self._fs.get(ObjectId(file_id_str))
-                    resume_bytes = file_obj.read()
-                    resume_text = _parse_resume_from_pdf_bytes(resume_bytes)
-                except Exception:
-                    resume_text = None
 
             info: Dict[str, Any] = {
                 "teacherName": doc.get("teacherName"),
@@ -161,7 +110,6 @@ class ClassroomService:
                     info=info,
                     domain_score=domain_results,
                     personality_text=personality_text,
-                    resume_text=resume_text,
                 )
             )
 

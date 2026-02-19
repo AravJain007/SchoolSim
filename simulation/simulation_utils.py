@@ -69,20 +69,16 @@ class SimulationUtils:
                 developer_prompt_to_llm=developer_message,
                 user_prompt_to_llm=user_message,
                 model_provider=Provider.LIGHTNING,
-                model_name="lightning-ai/gpt-oss-20b",
+                model_name="lightning-ai/gpt-oss-120b",
                 reasoning_effort=ReasoningEffort.HIGH,
             )
             prompts.append(message_to_llm)
-        semaphore_count = os.getenv("SEMAPHORE_COUNT")
-        if semaphore_count is not None:
-            semaphore = asyncio.Semaphore(int(semaphore_count))
-            student_doubts = await asyncio.gather(
-                *(self.llm_client.generate(prompt, semaphore) for prompt in prompts)
-            )
-        else:
-            student_doubts = await asyncio.gather(
-                *(self.llm_client.generate(prompt, semaphore) for prompt in prompts)
-            )
+        # Always use semaphore to limit concurrent LLM requests (default 1) - prevents rate limiting
+        semaphore_count = os.getenv("SEMAPHORE_COUNT", "1")
+        semaphore = asyncio.Semaphore(int(semaphore_count))
+        student_doubts = await asyncio.gather(
+            *(self.llm_client.generate(prompt, semaphore) for prompt in prompts)
+        )
         return [
             {
                 "student_name": student["name"],

@@ -33,7 +33,7 @@ class TestLLMCall:
             developer_prompt_to_llm=developer_message,
             user_prompt_to_llm=user_message,
             model_provider=Provider.LIGHTNING,
-            model_name="lightning-ai/gpt-oss-20b",
+            model_name="lightning-ai/gpt-oss-120b",
             reasoning_effort=ReasoningEffort.HIGH,
         )
         response = await llm_call_class.generate(input_to_function)

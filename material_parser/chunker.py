@@ -36,10 +36,6 @@ def chunk_by_structure(
 
 def _create_chunk_details(chunk_id: str, content: str, page_range: str) -> ChunkDetails:
     """Create ChunkDetails object with extracted metadata."""
-    # Extract new terms (kept for metadata, but not used for density calculation)
-    words = re.findall(r"\b[A-Z][a-z]+\b|\b[a-z]+[A-Z][a-z]*\b", content)
-    new_terms = list(set(words))[:10]
-
     # Check for formulas and code (useful metadata)
     has_formula = bool(re.search(r"[=+\-*/^()]+", content))
     has_code = bool(re.search(r"[{};]|def |class |import |print\(", content))
@@ -48,7 +44,6 @@ def _create_chunk_details(chunk_id: str, content: str, page_range: str) -> Chunk
         chunk_id=chunk_id,
         content=content,
         difficulty_index=0.0,  # Placeholder - will be populated post-simulation
-        new_terms=new_terms,
         page_range=page_range,
         has_formula=has_formula,
         has_code=has_code,

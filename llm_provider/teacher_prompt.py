@@ -68,14 +68,13 @@ TEACH_CHUNK_PROMPT = """---TEACHING TASK---
 You are teaching the following content chunk to your class:
 
 **Chunk ID**: {chunk_id}
-**Page/Slide**: {page_range}
+**Location**: {page_range} (chunk {chunk_number} of {total_chunks})
 **Content**:
 {content}
 
 **Content Metadata**:
 - Has formulas: {has_formula}
 - Has code: {has_code}
-- New terms introduced: {new_terms}
 
 ---
 
@@ -95,7 +94,7 @@ A student has asked the following question about the content you just taught:
 
 **Original Content Chunk**:
 **Chunk ID**: {chunk_id}
-**Page/Slide**: {page_range}
+**Location**: {page_range} (chunk {chunk_number} of {total_chunks})
 **Content**:
 {content}
 

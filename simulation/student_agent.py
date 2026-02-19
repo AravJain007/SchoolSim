@@ -37,7 +37,6 @@ class StudentAgent:
         self,
         student_details: StudentDetails,
         personality_prompt: Optional[str] = None,
-        biography: Optional[str] = None,
     ):
         """
         Initialize the Student Agent.
@@ -48,8 +47,6 @@ class StudentAgent:
             Student details containing name, personality info, etc.
         personality_prompt : Optional[str]
             Full personality prompt (if None, will be created from student_details)
-        biography : Optional[str]
-            Student biography text (needed if personality_prompt is None)
         """
         self.student_details = student_details
         self.student_id = student_details.college_id
@@ -59,17 +56,11 @@ class StudentAgent:
         if personality_prompt:
             self.personality_prompt = personality_prompt
         else:
-            # Extract biography from resume_text if available
-            if biography is None:
-                biography = student_details.resume_text or ""
-
-            # Create personality prompt from student details
             from llm_provider.creation_prompt import CHARACTER_IMPERSONATION_PROMPT
 
             self.personality_prompt = CHARACTER_IMPERSONATION_PROMPT.format(
                 name=self.name,
                 big5_personality_text=student_details.personality_text,
-                biography=biography,
             )
 
         # Initialize cognitive state
@@ -88,7 +79,7 @@ class StudentAgent:
         chunk: ChunkDetails,
         teaching_transcript: str,
         model_provider: Provider = Provider.LIGHTNING,
-        model_name: str = "lightning-ai/gpt-oss-20b",
+        model_name: str = "lightning-ai/gpt-oss-120b",
         reasoning_effort: ReasoningEffort = ReasoningEffort.HIGH,
     ) -> int:
         """
@@ -103,7 +94,7 @@ class StudentAgent:
         model_provider : Provider, optional
             LLM provider to use (default: LIGHTNING)
         model_name : str, optional
-            Model name to use (default: "lightning-ai/gpt-oss-20b")
+            Model name to use (default: "lightning-ai/gpt-oss-120b")
         reasoning_effort : ReasoningEffort, optional
             Reasoning effort level (default: HIGH)
 
@@ -113,18 +104,10 @@ class StudentAgent:
             Understanding rating from 1-5
         """
         try:
-            # Extract biography from personality prompt if available
-            biography = ""
-            if "### Life Experience Context" in self.personality_prompt:
-                parts = self.personality_prompt.split("### Life Experience Context")
-                if len(parts) > 1:
-                    biography = parts[1].split("---")[0].strip()
-
             # Format the user prompt
             user_prompt = STUDENT_UNDERSTANDING_PROMPT.format(
                 name=self.name,
                 big5_personality_text=self.student_details.personality_text,
-                biography=biography,
                 chunk_id=chunk.chunk_id,
                 page_range=chunk.page_range,
                 content=chunk.content,
@@ -185,7 +168,7 @@ class StudentAgent:
         chunk: ChunkDetails,
         teaching_transcript: str,
         model_provider: Provider = Provider.LIGHTNING,
-        model_name: str = "lightning-ai/gpt-oss-20b",
+        model_name: str = "lightning-ai/gpt-oss-120b",
         reasoning_effort: ReasoningEffort = ReasoningEffort.HIGH,
     ) -> str:
         """
@@ -200,7 +183,7 @@ class StudentAgent:
         model_provider : Provider, optional
             LLM provider to use (default: LIGHTNING)
         model_name : str, optional
-            Model name to use (default: "lightning-ai/gpt-oss-20b")
+            Model name to use (default: "lightning-ai/gpt-oss-120b")
         reasoning_effort : ReasoningEffort, optional
             Reasoning effort level (default: HIGH)
 
@@ -210,18 +193,10 @@ class StudentAgent:
             The student's doubt/question
         """
         try:
-            # Extract biography from personality prompt if available
-            biography = ""
-            if "### Life Experience Context" in self.personality_prompt:
-                parts = self.personality_prompt.split("### Life Experience Context")
-                if len(parts) > 1:
-                    biography = parts[1].split("---")[0].strip()
-
             # Format the user prompt
             user_prompt = STUDENT_DOUBT_PROMPT.format(
                 name=self.name,
                 big5_personality_text=self.student_details.personality_text,
-                biography=biography,
                 chunk_id=chunk.chunk_id,
                 page_range=chunk.page_range,
                 content=chunk.content,
@@ -251,6 +226,25 @@ class StudentAgent:
 
             doubt = result.response.strip()
 
+            # Strip markdown code fences (```json ... ```) if present
+            if doubt.startswith("```"):
+                doubt = doubt.strip("`").strip()
+                if doubt.lower().startswith("json"):
+                    doubt = doubt[4:].strip()
+
+            # Some models return full JSON despite the plain-text instruction.
+            # If so, extract only the actual doubt string.
+            try:
+                parsed = json.loads(doubt)
+                if isinstance(parsed, dict):
+                    generated = parsed.get("generated_content", {})
+                    if isinstance(generated, dict) and "doubt" in generated:
+                        doubt = generated["doubt"]
+                    elif "doubt" in parsed:
+                        doubt = parsed["doubt"]
+            except (json.JSONDecodeError, ValueError):
+                pass  # Plain text response — use as-is
+
             # Store the doubt
             self.state.doubts_asked.append(doubt)
 
@@ -269,7 +263,7 @@ class StudentAgent:
         doubt: str,
         teacher_response: str,
         model_provider: Provider = Provider.LIGHTNING,
-        model_name: str = "lightning-ai/gpt-oss-20b",
+        model_name: str = "lightning-ai/gpt-oss-120b",
         reasoning_effort: ReasoningEffort = ReasoningEffort.HIGH,
     ) -> int:
         """
@@ -286,7 +280,7 @@ class StudentAgent:
         model_provider : Provider, optional
             LLM provider to use (default: LIGHTNING)
         model_name : str, optional
-            Model name to use (default: "lightning-ai/gpt-oss-20b")
+            Model name to use (default: "lightning-ai/gpt-oss-120b")
         reasoning_effort : ReasoningEffort, optional
             Reasoning effort level (default: HIGH)
 
@@ -298,18 +292,10 @@ class StudentAgent:
         try:
             understanding_before = self.state.cognitive_state.understanding
 
-            # Extract biography from personality prompt if available
-            biography = ""
-            if "### Life Experience Context" in self.personality_prompt:
-                parts = self.personality_prompt.split("### Life Experience Context")
-                if len(parts) > 1:
-                    biography = parts[1].split("---")[0].strip()
-
             # Format the user prompt
             user_prompt = STUDENT_RERATING_PROMPT.format(
                 name=self.name,
                 big5_personality_text=self.student_details.personality_text,
-                biography=biography,
                 chunk_id=chunk.chunk_id,
                 page_range=chunk.page_range,
                 content=chunk.content,

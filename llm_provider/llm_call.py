@@ -1,13 +1,14 @@
+import asyncio
 import logging
 import os
+import random
 from asyncio import Semaphore
-from email import message
 from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from openai import AsyncClient, api_key
+from openai import AsyncClient
 
 from pydantic_classes import LLMCallInput, LLMProvider, LLMResult
 
@@ -19,7 +20,7 @@ PROVIDER_COST: Dict[str, Dict[str, List[float]]] = {
         "gemini-2.5-flash": [0.3 / 1e6, 2.5 / 1e6],
         "gemini-2.5-flash-lite": [0.1 / 1e6, 0.40 / 1e6],
     },
-    "lightning": {"lightning-ai/gpt-oss-20b": [0.05 / 1e6, 0.20 / 1e6]},
+    "lightning": {"lightning-ai/gpt-oss-120b": [0.05 / 1e6, 0.20 / 1e6]},
 }
 
 
@@ -145,6 +146,8 @@ class LightningProvider(LLMProvider):
             api_key=api_key,
         )
         self.logger = logger
+        # Delay between requests to avoid rate limiting (seconds)
+        self._request_delay = float(os.getenv("LIGHTNING_REQUEST_DELAY", "3"))
 
     async def generate(self, input_prompt: LLMCallInput) -> LLMResult:
         """Given function is to generate a response using Gemini series of models
@@ -161,62 +164,108 @@ class LightningProvider(LLMProvider):
         LLMResult
             Output dictionary which contains the status of the function call and the response received from the Language Models.
         """
-        try:
-            messages = []
-            if input_prompt.system_prompt_provided:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": [
-                            {"type": "text", "text": input_prompt.system_prompt_to_llm}
-                        ],
-                    }
+        # Lightning is more stable with OpenAI-compatible plain-string messages.
+        # Avoid developer role and typed content arrays for maximum compatibility.
+        messages = []
+        system_parts = []
+        if input_prompt.system_prompt_provided and input_prompt.system_prompt_to_llm:
+            system_parts.append(input_prompt.system_prompt_to_llm)
+        if (
+            input_prompt.developer_prompt_provided
+            and input_prompt.developer_prompt_to_llm
+        ):
+            system_parts.append(input_prompt.developer_prompt_to_llm)
+        if system_parts:
+            messages.append({"role": "system", "content": "\n\n".join(system_parts)})
+        messages.append({"role": "user", "content": input_prompt.user_prompt_to_llm})
+
+        # Throttle requests to avoid rate limiting
+        if self._request_delay > 0:
+            await asyncio.sleep(self._request_delay)
+
+        max_retries = 5
+        include_reasoning_effort = True
+        for attempt in range(max_retries):
+            try:
+                request_kwargs = dict(
+                    model=input_prompt.model_name,
+                    messages=messages,
                 )
-            if input_prompt.developer_prompt_provided:
-                messages.append(
-                    {
-                        "role": "developer",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": input_prompt.developer_prompt_to_llm,
-                            }
-                        ],
-                    }
+                if include_reasoning_effort:
+                    request_kwargs["reasoning_effort"] = input_prompt.reasoning_effort
+
+                completion = await self.lightning_client.chat.completions.create(
+                    **request_kwargs
                 )
-            messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": input_prompt.user_prompt_to_llm}
-                    ],
-                }
-            )
-            completion = await self.lightning_client.chat.completions.create(
-                model=input_prompt.model_name,
-                messages=messages,
-                reasoning_effort=input_prompt.reasoning_effort,
-            )
-            cost_list = PROVIDER_COST["lightning"][input_prompt.model_name]
-            cost_of_call = (
-                cost_list[0] * completion.usage.prompt_tokens
-                + cost_list[1] * completion.usage.completion_tokens
-            )
-            return LLMResult(
-                status=200,
-                response=completion.choices[0].message.content,
-                response_reasoning=completion.choices[0].message.reasoning_content,
-                cost=cost_of_call,
-            )
-        except Exception as e:
-            self.logger.error(
-                f"""You have encountered the error:
-                {e}
-                This error is due to no response from the Lightning API.
-                Kindly check if you have hit the rate limit.
-                """
-            )
-            return LLMResult(status=500, response="", response_reasoning="")
+                message = completion.choices[0].message
+                response_text = message.content
+                if isinstance(response_text, list):
+                    response_text = "".join(
+                        part.get("text", "")
+                        for part in response_text
+                        if isinstance(part, dict)
+                    )
+
+                response_reasoning = getattr(message, "reasoning_content", "NA") or "NA"
+                cost_list = PROVIDER_COST["lightning"][input_prompt.model_name]
+                cost_of_call = (
+                    cost_list[0] * completion.usage.prompt_tokens
+                    + cost_list[1] * completion.usage.completion_tokens
+                )
+                return LLMResult(
+                    status=200,
+                    response=response_text or "",
+                    response_reasoning=response_reasoning,
+                    cost=cost_of_call,
+                )
+            except Exception as e:
+                status_code = getattr(e, "status_code", None)
+                is_rate_limit = (
+                    status_code == 429
+                    or "429" in str(e)
+                    or "rate limit" in str(e).lower()
+                )
+                is_server_error = (
+                    (isinstance(status_code, int) and status_code >= 500)
+                    or "internal server error" in str(e).lower()
+                    or "invalid character 'i' looking for beginning of value"
+                    in str(e).lower()
+                )
+
+                # Lightning can reject reasoning_effort and return 500.
+                # Fallback once to the same request without reasoning_effort.
+                if is_server_error and include_reasoning_effort:
+                    include_reasoning_effort = False
+                    self.logger.warning(
+                        "Lightning returned server error with reasoning_effort. "
+                        "Retrying without reasoning_effort."
+                    )
+                    await asyncio.sleep(random.uniform(1, 2))
+                    continue
+
+                if is_rate_limit and attempt < max_retries - 1:
+                    delay = random.uniform(15, 20)
+                    self.logger.warning(
+                        f"Rate limit hit. Pausing {delay:.1f}s (15-20s random) before retry "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    await asyncio.sleep(delay)
+                elif is_server_error and attempt < max_retries - 1:
+                    delay = random.uniform(3, 6)
+                    self.logger.warning(
+                        f"Lightning server error. Retrying in {delay:.1f}s "
+                        f"(attempt {attempt + 1}/{max_retries})"
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    self.logger.error(
+                        f"""You have encountered the error:
+                        {e}
+                        This error is due to no response from the Lightning API.
+                        Kindly check if you have hit the rate limit.
+                        """
+                    )
+                    return LLMResult(status=500, response="", response_reasoning="")
 
 
 class LMStudioProvider(LLMProvider):

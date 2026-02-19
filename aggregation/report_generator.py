@@ -70,25 +70,22 @@ def generate_gap_report(
     if chunks:
         chunk_content_map = {c.chunk_id: c for c in chunks}
 
-    # Collect principal notes per chunk
+    # Collect per-chunk KLI scores from each run's session-level principal_summary
     principal_notes_map: Dict[str, List[str]] = {}
     for run in runs:
-        for chunk_result in run.chunk_results:
-            chunk_id = chunk_result.get("chunk_id")
-            analysis = chunk_result.get("principal_analysis")
-
-            if chunk_id and analysis:
-                if chunk_id not in principal_notes_map:
-                    principal_notes_map[chunk_id] = []
-
-                # Handle both dict and PrincipalAnalysis
-                if isinstance(analysis, dict):
-                    notes = analysis.get("notes", "")
-                else:
-                    notes = analysis.notes
-
-                if notes:
-                    principal_notes_map[chunk_id].append(notes)
+        summary = run.principal_summary
+        if not summary:
+            continue
+        for chunk_id, score in summary.per_chunk_scores.items():
+            if chunk_id not in principal_notes_map:
+                principal_notes_map[chunk_id] = []
+            # Attach the session notes once per run (score context)
+            note = (
+                f"KLI score: {score:.2f} — {summary.notes[:120]}..."
+                if summary.notes
+                else f"KLI score: {score:.2f}"
+            )
+            principal_notes_map[chunk_id].append(note)
 
     # Build gap entries
     gap_entries: List[dict] = []
@@ -173,42 +170,29 @@ def generate_principal_summary(runs: List[SimulationRun]) -> dict:
     critical_misalignments: List[dict] = []
 
     for run in runs:
-        # Check principal_summary
         summary = run.principal_summary
-        if summary:
-            all_alignment_scores.append(summary.alignment_score)
-            all_prerequisites.extend(summary.missing_prerequisites)
-            all_suggested_methods.extend(summary.suggested_methods)
-            if summary.notes:
-                all_notes.append(summary.notes)
+        if not summary:
+            continue
 
-        # Check per-chunk analyses
-        for chunk_result in run.chunk_results:
-            analysis = chunk_result.get("principal_analysis")
-            if not analysis:
-                continue
+        all_alignment_scores.append(summary.alignment_score)
+        all_prerequisites.extend(summary.missing_prerequisites)
+        all_suggested_methods.extend(summary.suggested_methods)
+        if summary.notes:
+            all_notes.append(summary.notes)
 
-            # Handle both dict and PrincipalAnalysis
-            if isinstance(analysis, dict):
-                score = analysis.get("alignment_score", 1.0)
-                chunk_id = analysis.get("chunk_id", chunk_result.get("chunk_id"))
-                methods = analysis.get("suggested_methods", [])
-                notes = analysis.get("notes", "")
-            else:
-                score = analysis.alignment_score
-                chunk_id = analysis.chunk_id
-                methods = analysis.suggested_methods
-                notes = analysis.notes
-
-            # Flag critical misalignments
+        # Derive critical misalignments from per-chunk scores in the session summary
+        for chunk_id, score in summary.per_chunk_scores.items():
             if score < 0.5:
+                suggestion = (
+                    summary.suggested_methods[0]
+                    if summary.suggested_methods
+                    else "Review teaching method"
+                )
                 critical_misalignments.append(
                     {
                         "chunk_id": chunk_id,
-                        "issue": notes if notes else "Low alignment detected",
-                        "suggestion": methods[0]
-                        if methods
-                        else "Review teaching method",
+                        "issue": f"Low KLI alignment ({score:.2f}) detected for this chunk",
+                        "suggestion": suggestion,
                     }
                 )
 

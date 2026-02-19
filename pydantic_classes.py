@@ -87,10 +87,6 @@ class StudentDetails(BaseModel):
         default="",
         description="Concatenated textual summary across domains for easy display.",
     )
-    resume_text: Optional[str] = Field(
-        default=None,
-        description="Plain text (or markdown) extracted from the PDF resume",
-    )
 
 
 class ClassroomDetails(BaseModel):
@@ -118,10 +114,11 @@ class ChunkDetails(BaseModel):
         le=100,
         description="Semantic density on 0-100 scale (populated post-simulation based on student understanding scores)",
     )
-    new_terms: List[str] = Field(
-        default_factory=list, description="List of new terms in the chunk"
+
+    page_range: str = Field(
+        ...,
+        description="Location reference (e.g., 'Slide 3', 'Page 2', or 'Paragraph 5')",
     )
-    page_range: str = Field(..., description="Page range (e.g., 'Slide 3' or 'Page 2')")
     has_formula: bool = Field(
         default=False, description="Whether the chunk contains formulas"
     )
@@ -193,15 +190,25 @@ class StudentResponse(BaseModel):
 
 
 class PrincipalAnalysis(BaseModel):
-    chunk_id: str = Field(..., description="Chunk identifier")
-    alignment_score: float = Field(..., ge=0, le=1, description="Alignment score (0-1)")
+    chunk_id: str = Field(
+        default="session",
+        description="'session' for end-of-session analysis, or chunk id for legacy per-chunk use",
+    )
+    alignment_score: float = Field(
+        ..., ge=0, le=1, description="Overall alignment score (0-1)"
+    )
+    per_chunk_scores: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Per-chunk KLI alignment scores keyed by chunk_id",
+    )
     missing_prerequisites: List[str] = Field(
-        default_factory=list, description="List of missing prerequisites"
+        default_factory=list,
+        description="List of missing prerequisites identified across the session",
     )
     suggested_methods: List[str] = Field(
-        default_factory=list, description="Suggested teaching methods"
+        default_factory=list, description="Suggested teaching method improvements"
     )
-    notes: str = Field(default="", description="Additional notes")
+    notes: str = Field(default="", description="Full KLI analysis text")
 
 
 class SimulationRun(BaseModel):

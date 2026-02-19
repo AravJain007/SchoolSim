@@ -179,7 +179,43 @@ Provide a score from 0.0 to 1.0 based on:
 Provide your analysis in a structured, evidence-based format.
 """
 
+SESSION_ANALYSIS_PROMPT = """Analyze the complete teaching session below using the KLI Framework. You have the full picture — all chunks, all transcripts, all student responses.
+
+**FULL SESSION DATA:**
+{session_data}
+
+Respond in EXACTLY this structure (do not add extra sections):
+
+## Per-Chunk KLI Snapshot
+One line per chunk, strictly in this format:
+`[CHUNK_ID]: KC=<type> | Phase=<phase> | Method=<method> | Score=<0.0-1.0>`
+Where KC type ∈ {{Declarative, Procedural, Conceptual, Metacognitive}}, Phase ∈ {{Memory, Induction, Sense-Making}}, Method ∈ {{Direct, Worked-Example, Analogy, Discovery, Practice}}
+
+## Session Assessment
+- **Knowledge Progression**: Did the session scaffold from simple to complex appropriately?
+- **Bloom's Arc**: What cognitive levels (Remember/Understand/Apply/Analyze/Evaluate/Create) were targeted — and was the progression appropriate for the material?
+- **Instruction Patterns**: Any recurring method mismatches across chunks?
+Keep this section under 180 words total.
+
+## Overall Alignment Score
+<single decimal between 0.0 and 1.0>
+
+## Missing Prerequisites
+- <at most 3 items>
+
+## Top Improvements
+- <at most 3 actionable items grounded in KLI principles>
+"""
+
 PRINCIPAL_SUMMARY_PROMPT = """Based on all the individual chunk analyses, generate a comprehensive summary of the teaching session:
+
+**PRE-COMPUTED STATISTICS (use these exact values in your summary):**
+- Average Alignment Score: {avg_alignment_score:.2f}/1.0
+- Alignment Distribution:
+  - Excellent (0.8+): {excellent_count} chunks
+  - Good (0.6-0.8): {good_count} chunks
+  - Moderate (0.4-0.6): {moderate_count} chunks
+  - Poor (<0.4): {poor_count} chunks
 
 **ALL CHUNK ANALYSES:**
 {all_analyses}
@@ -188,8 +224,8 @@ Please provide:
 
 ## Overall Assessment
 
-1. **Average Alignment Score**: Calculate the mean alignment score across all chunks
-2. **Alignment Distribution**: How many chunks had excellent (0.8+), good (0.6-0.8), moderate (0.4-0.6), or poor (<0.4) alignment?
+1. **Average Alignment Score**: Use the pre-computed value above ({avg_alignment_score:.2f}/1.0)
+2. **Alignment Distribution**: Use the pre-computed counts above (excellent: {excellent_count}, good: {good_count}, moderate: {moderate_count}, poor: {poor_count})
 
 ## Critical Findings
 

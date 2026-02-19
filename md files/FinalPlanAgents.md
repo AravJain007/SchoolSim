@@ -148,7 +148,7 @@ def parse_document(file_path: str) -> List[ChunkDetails]:
         chunk = ChunkDetails(
             chunk_id=f"chunk_{idx}",
             content=content_unit,
-            page_range=f"Slide {idx}" if is_ppt else f"Page {idx}",
+            page_range=f"Slide {idx}" if is_ppt else (f"Paragraph {idx}" if is_doc else f"Page {idx}"),
             difficulty_index=0.0,  # Placeholder - populated post-simulation
             has_formula=detect_formulas(content_unit),
             has_code=detect_code(content_unit)
@@ -163,7 +163,6 @@ def parse_document(file_path: str) -> List[ChunkDetails]:
   "chunk_id": "chunk_3",
   "content": "...",
   "difficulty_index": 0.0,
-  "new_terms": ["recursion", "base_case"],
   "page_range": "Slide 3",
   "has_formula": true,
   "has_code": false
@@ -248,6 +247,12 @@ AGGREGATE:
 ## 5. Output Generation
 
 ### 5.1 Heatmap Visualization
+
+**Annotation Granularity by File Type:**
+- **PDF**: Full-page color overlay (1 page = 1 chunk)
+- **PPT/PPTX**: Full-slide color overlay (1 slide = 1 chunk)
+- **DOC/DOCX**: Paragraph-level text highlighting (1 paragraph = 1 chunk) — *finer granularity*
+
 ```python
 def generate_heatmap(material_file, aggregation_results):
     for chunk in aggregation_results:
@@ -261,12 +266,12 @@ def generate_heatmap(material_file, aggregation_results):
             color = GREEN    # Clear
             annotation = None
 
+        # page_range may be "Page 5", "Slide 3", or "Paragraph 7"
         overlay_on_original(material_file, chunk.page_range, color)
 
         if annotation:
-            # Feasibility: Adding text to bottom of existing PDF/PPT slide
-            # is standard. Can use reportlab to draw a white box + text
-            # at bottom coordinates (x=50, y=50).
+            # PDF/PPT: Footer text box at bottom
+            # DOCX: Word comment anchored to paragraph
             add_footer_note(material_file, chunk.page_range, annotation)
 
     return annotated_material

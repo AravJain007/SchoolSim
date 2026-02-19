@@ -19,13 +19,15 @@ References:
 
 import json
 import logging
-from typing import List, Optional
+import re
+from typing import Any, Dict, List, Optional
 
 from llm_provider.llm_call import LLMCall
 from llm_provider.principal_prompt import (
     PRINCIPAL_ANALYSIS_PROMPT,
     PRINCIPAL_SUMMARY_PROMPT,
     PRINCIPAL_SYSTEM_PROMPT,
+    SESSION_ANALYSIS_PROMPT,
 )
 from pydantic_classes import (
     ChunkDetails,
@@ -354,6 +356,249 @@ class PrincipalAgent:
             notes=notes,
         )
 
+    async def analyze_session(
+        self,
+        chunks: List[ChunkDetails],
+        chunk_results: List[Dict[str, Any]],
+        model_provider: Provider = Provider.GEMINI,
+        model_name: str = "gemini-2.5-flash",
+        reasoning_effort: ReasoningEffort = ReasoningEffort.MEDIUM,
+    ) -> PrincipalAnalysis:
+        """
+        Analyze the complete teaching session once, after all chunks are done.
+
+        This is the primary entry point for KLI analysis. It receives the full
+        session context — every chunk's content, teaching transcript, and student
+        responses — and produces a single holistic analysis rather than N per-chunk
+        essays.
+
+        The analysis includes:
+        - A one-line KLI snapshot per chunk (KC type, learning phase, method, score)
+        - Session-level assessment of knowledge progression and Bloom's arc
+        - Overall alignment score
+        - Top missing prerequisites and improvement recommendations
+
+        Parameters
+        ----------
+        chunks : List[ChunkDetails]
+            All content chunks that were taught in the session
+        chunk_results : List[Dict[str, Any]]
+            Per-chunk results from the orchestrator containing teaching transcripts
+            and student responses (output of _process_chunk)
+        model_provider : Provider
+            LLM provider to use (default: GEMINI)
+        model_name : str
+            Model name to use (default: gemini-2.5-flash)
+        reasoning_effort : ReasoningEffort
+            Reasoning effort — MEDIUM is sufficient since we provide all context
+
+        Returns
+        -------
+        PrincipalAnalysis
+            Session-level analysis with per_chunk_scores dict, overall alignment
+            score, missing prerequisites, suggested methods, and full notes
+        """
+        try:
+            session_data = self._format_session_for_analysis(chunks, chunk_results)
+
+            user_prompt = SESSION_ANALYSIS_PROMPT.format(session_data=session_data)
+
+            llm_input = LLMCallInput(
+                system_prompt_provided=True,
+                system_prompt_to_llm=PRINCIPAL_SYSTEM_PROMPT,
+                user_prompt_to_llm=user_prompt,
+                model_provider=model_provider,
+                model_name=model_name,
+                reasoning_effort=reasoning_effort,
+            )
+
+            result = await self.llm_client.generate(llm_input)
+
+            if result.status != 200:
+                self.logger.error(
+                    f"Failed to generate session analysis: {result.response_reasoning}"
+                )
+                return PrincipalAnalysis(
+                    chunk_id="session",
+                    alignment_score=0.5,
+                    notes=f"Error generating session analysis: {result.response_reasoning}",
+                )
+
+            analysis = self._parse_session_response(result.response, chunks)
+            self.logger.info(
+                f"Completed end-of-session KLI analysis: "
+                f"overall_score={analysis.alignment_score:.2f}, "
+                f"chunks_scored={len(analysis.per_chunk_scores)}"
+            )
+            return analysis
+
+        except Exception as e:
+            self.logger.error(f"Error in analyze_session: {e}", exc_info=True)
+            return PrincipalAnalysis(
+                chunk_id="session",
+                alignment_score=0.5,
+                notes=f"Exception during session analysis: {str(e)}",
+            )
+
+    def _format_session_for_analysis(
+        self,
+        chunks: List[ChunkDetails],
+        chunk_results: List[Dict[str, Any]],
+    ) -> str:
+        """
+        Format all session data into a compact string for the LLM.
+
+        Truncates content and transcripts to keep the prompt manageable
+        while preserving enough context for meaningful KLI assessment.
+        """
+        chunk_lookup = {c.chunk_id: c for c in chunks}
+        lines = []
+
+        for i, result in enumerate(chunk_results, 1):
+            chunk_id = result.get("chunk_id", f"chunk_{i}")
+            chunk = chunk_lookup.get(chunk_id)
+            teaching_output = result.get("teaching_output", {})
+            student_responses = result.get("student_responses", [])
+
+            lines.append(f"--- CHUNK {i}: {chunk_id} ---")
+
+            if chunk:
+                content_preview = chunk.content[:250].replace("\n", " ")
+                lines.append(f"Content: {content_preview}...")
+                flags = []
+                if chunk.has_formula:
+                    flags.append("has_formula")
+                if chunk.has_code:
+                    flags.append("has_code")
+                if flags:
+                    lines.append(f"Flags: {', '.join(flags)}")
+                lines.append(f"Location: {chunk.page_range}")
+
+            method = teaching_output.get("teaching_method_used", "unknown")
+            transcript = teaching_output.get("teaching_transcript", "")
+            lines.append(f"Teaching method: {method}")
+            lines.append(f"Transcript: {transcript[:350].replace(chr(10), ' ')}...")
+
+            if student_responses:
+                avg_before = sum(
+                    r.get("understanding_before", 3) for r in student_responses
+                ) / len(student_responses)
+                avg_after = sum(
+                    r.get("understanding_after", 3) for r in student_responses
+                ) / len(student_responses)
+                doubts = [
+                    r.get("doubt_asked")
+                    for r in student_responses
+                    if r.get("doubt_asked")
+                ]
+                lines.append(
+                    f"Student understanding: {avg_before:.1f} → {avg_after:.1f}/5 "
+                    f"(n={len(student_responses)})"
+                )
+                if doubts:
+                    doubt_preview = "; ".join(doubts[:2])
+                    lines.append(f"Doubts raised: {doubt_preview[:200]}")
+            else:
+                lines.append("Student understanding: no data")
+
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def _parse_session_response(
+        self,
+        response_text: str,
+        chunks: List[ChunkDetails],
+    ) -> PrincipalAnalysis:
+        """
+        Parse the end-of-session LLM response into a PrincipalAnalysis.
+
+        Extracts per-chunk scores from the Per-Chunk KLI Snapshot section,
+        the overall alignment score, missing prerequisites, and suggested methods.
+        """
+        alignment_score = 0.5
+        per_chunk_scores: Dict[str, float] = {}
+        missing_prerequisites: List[str] = []
+        suggested_methods: List[str] = []
+
+        try:
+            # Extract per-chunk scores from snapshot lines:
+            # `[CHUNK_ID]: KC=... | Phase=... | Method=... | Score=0.85`
+            snapshot_pattern = re.compile(
+                r"`?\[?([^\]:`\n]+?)\]?`?\s*:\s*KC=\S+.*?Score=([0-9]\.[0-9]+)",
+                re.IGNORECASE,
+            )
+            for match in snapshot_pattern.finditer(response_text):
+                chunk_id_raw = match.group(1).strip()
+                try:
+                    score = float(match.group(2))
+                    if 0.0 <= score <= 1.0:
+                        per_chunk_scores[chunk_id_raw] = score
+                except ValueError:
+                    continue
+
+            # Extract overall alignment score from "## Overall Alignment Score" section
+            overall_section = re.search(
+                r"##\s*Overall Alignment Score\s*\n\s*([0-9]\.[0-9]+)",
+                response_text,
+                re.IGNORECASE,
+            )
+            if overall_section:
+                try:
+                    score = float(overall_section.group(1))
+                    if 0.0 <= score <= 1.0:
+                        alignment_score = score
+                except ValueError:
+                    pass
+
+            # Fallback: derive overall score from per-chunk scores
+            if alignment_score == 0.5 and per_chunk_scores:
+                alignment_score = round(
+                    sum(per_chunk_scores.values()) / len(per_chunk_scores), 2
+                )
+
+            # Extract missing prerequisites bullets
+            prereq_section = re.search(
+                r"##\s*Missing Prerequisites\s*\n(.*?)(?=\n##|\Z)",
+                response_text,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if prereq_section:
+                items = re.findall(
+                    r"[-•*]\s*(.+?)(?=\n[-•*]|\n\n|\Z)",
+                    prereq_section.group(1),
+                    re.DOTALL,
+                )
+                missing_prerequisites = [
+                    item.strip() for item in items if item.strip()
+                ][:3]
+
+            # Extract top improvements bullets
+            improvements_section = re.search(
+                r"##\s*Top Improvements\s*\n(.*?)(?=\n##|\Z)",
+                response_text,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if improvements_section:
+                items = re.findall(
+                    r"[-•*]\s*(.+?)(?=\n[-•*]|\n\n|\Z)",
+                    improvements_section.group(1),
+                    re.DOTALL,
+                )
+                suggested_methods = [item.strip() for item in items if item.strip()][:3]
+
+        except Exception as e:
+            self.logger.warning(f"Error parsing session response: {e}")
+
+        return PrincipalAnalysis(
+            chunk_id="session",
+            alignment_score=alignment_score,
+            per_chunk_scores=per_chunk_scores,
+            missing_prerequisites=missing_prerequisites,
+            suggested_methods=suggested_methods,
+            notes=response_text,
+        )
+
     async def generate_summary(
         self,
         all_analyses: List[PrincipalAnalysis],
@@ -399,8 +644,26 @@ class PrincipalAgent:
             # Format all analyses as text
             analyses_text = self._format_analyses_for_summary(all_analyses)
 
-            # Create the summary prompt
-            user_prompt = PRINCIPAL_SUMMARY_PROMPT.format(all_analyses=analyses_text)
+            # Pre-compute statistics in code (avoid LLM doing math)
+            avg_alignment_score = sum(a.alignment_score for a in all_analyses) / len(
+                all_analyses
+            )
+            excellent_count = sum(1 for a in all_analyses if a.alignment_score >= 0.8)
+            good_count = sum(1 for a in all_analyses if 0.6 <= a.alignment_score < 0.8)
+            moderate_count = sum(
+                1 for a in all_analyses if 0.4 <= a.alignment_score < 0.6
+            )
+            poor_count = sum(1 for a in all_analyses if a.alignment_score < 0.4)
+
+            # Create the summary prompt with pre-computed values
+            user_prompt = PRINCIPAL_SUMMARY_PROMPT.format(
+                all_analyses=analyses_text,
+                avg_alignment_score=avg_alignment_score,
+                excellent_count=excellent_count,
+                good_count=good_count,
+                moderate_count=moderate_count,
+                poor_count=poor_count,
+            )
 
             # Create LLM call input
             llm_input = LLMCallInput(

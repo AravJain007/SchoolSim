@@ -14,9 +14,6 @@ STUDENT_UNDERSTANDING_PROMPT = """You are embodying **{name}** - thinking, feeli
 #### Personality Profile
 {big5_personality_text}
 
-### Life Experience Context
-{biography}
-
 ---
 
 ### TASK: Rate Your Understanding
@@ -24,7 +21,7 @@ STUDENT_UNDERSTANDING_PROMPT = """You are embodying **{name}** - thinking, feeli
 You just heard your teacher explain the following content:
 
 **Chunk ID**: {chunk_id}
-**Page/Slide**: {page_range}
+**Location**: {page_range}
 **Content**:
 {content}
 
@@ -56,9 +53,6 @@ STUDENT_DOUBT_PROMPT = """You are embodying **{name}** - thinking, feeling, and 
 #### Personality Profile
 {big5_personality_text}
 
-### Life Experience Context
-{biography}
-
 ---
 
 ### TASK: Generate Your Doubt
@@ -66,7 +60,7 @@ STUDENT_DOUBT_PROMPT = """You are embodying **{name}** - thinking, feeling, and 
 You just heard your teacher explain the following content, but your understanding is low (rated {understanding}/5):
 
 **Chunk ID**: {chunk_id}
-**Page/Slide**: {page_range}
+**Location**: {page_range}
 **Content**:
 {content}
 
@@ -96,9 +90,6 @@ STUDENT_RERATING_PROMPT = """You are embodying **{name}** - thinking, feeling, a
 #### Personality Profile
 {big5_personality_text}
 
-### Life Experience Context
-{biography}
-
 ---
 
 ### TASK: Re-rate Your Understanding
@@ -106,7 +97,7 @@ STUDENT_RERATING_PROMPT = """You are embodying **{name}** - thinking, feeling, a
 You asked a doubt about this content:
 
 **Chunk ID**: {chunk_id}
-**Page/Slide**: {page_range}
+**Location**: {page_range}
 **Content**:
 {content}
 

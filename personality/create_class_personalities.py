@@ -1,24 +1,17 @@
-import asyncio
-import json
 import os
 from typing import Dict, List, Optional
 
 from pymongo import MongoClient
 from pymongo.results import InsertManyResult
 
-from llm_provider.creation_prompt import (
-    CHARACTER_IMPERSONATION_PROMPT,
-    RESUME_BIOGRAPHY_CREATION,
-)
-from llm_provider.llm_call import LLMCall
+from llm_provider.creation_prompt import CHARACTER_IMPERSONATION_PROMPT
 from personality.classroom_service import ClassroomService
-from pydantic_classes import ClassroomDetails, LLMCallInput, Provider, ReasoningEffort
+from pydantic_classes import ClassroomDetails
 
 
 class CreatePersonalities:
     def __init__(self):
         self.classroom_client = ClassroomService()
-        self.llm_client = LLMCall()
         self.db_client = MongoClient(
             os.getenv("MONGO_SERVER"), serverSelectionTimeoutMS=5000
         )
@@ -28,82 +21,57 @@ class CreatePersonalities:
 
     def save_personality_prompt(
         self,
-        biography_prompts: List[Dict],
+        personality_prompts: List[Dict],
         collection: str,
         database_name: str = "personalities",
     ) -> InsertManyResult:
-        """This function saves the personality of the user in the Mongo DB server
+        """Save personality prompts to MongoDB.
 
         Parameters
         ----------
-            student_details: List[Dict]
-                Details of all the students in a class to create personalities
+            personality_prompts: List[Dict]
+                Personality prompt dicts for each student
+            collection: str
+                MongoDB collection name
+            database_name: str
+                MongoDB database name
 
         Returns
         -------
-            InsertManyResults
+            InsertManyResult
                 The IDs of the stored data
         """
         result = self.db_client[database_name][collection].insert_many(
-            biography_prompts
+            personality_prompts
         )
         return result
 
-    async def biography_creation(
+    def build_personality_prompts(
         self, classroom_details: ClassroomDetails
     ) -> List[Dict]:
-        """Helper function to create biographies of the entire classroom
+        """Build personality prompts for all students using only Big5 personality data.
 
         Parameters
         ----------
             classroom_details: ClassroomDetails
                 Details of the class
 
-        Returns:
+        Returns
+        -------
             List[Dict]
-                List of names of student and their created biographies
+                List of dicts with student info and their personality prompt
         """
-        prompt_for_student_biographies: List[LLMCallInput] = []
-        # Create the biography of the student first
-        for student_detail in classroom_details.students:
-            user_prompt_to_gpt = RESUME_BIOGRAPHY_CREATION.format(
-                resume_text=student_detail.resume_text
-            )
-            llm_input = LLMCallInput(
-                user_prompt_to_llm=user_prompt_to_gpt,
-                model_provider=Provider.LIGHTNING,
-                model_name="lightning-ai/gpt-oss-20b",
-                reasoning_effort=ReasoningEffort.HIGH,
-            )
-            prompt_for_student_biographies.append(llm_input)
-        semaphore_count = os.getenv("SEMAPHORE_COUNT")
-        if semaphore_count is not None:
-            semaphore = asyncio.Semaphore(int(semaphore_count))
-            llm_outputs = await asyncio.gather(
-                *(
-                    self.llm_client.generate(prompt, semaphore)
-                    for prompt in prompt_for_student_biographies
-                )
-            )
-        else:
-            llm_outputs = await asyncio.gather(
-                *(
-                    self.llm_client.generate(prompt)
-                    for prompt in prompt_for_student_biographies
-                )
-            )
         results = []
-        for student, biography in zip(classroom_details.students, llm_outputs):
-            print(biography.status)
+        for student_detail in classroom_details.students:
             results.append(
                 {
-                    "name": student.name,
-                    "classroom": student.info["classLocation"],
-                    "professor_name": student.info["teacherName"],
+                    "name": student_detail.name,
+                    "college_id": student_detail.college_id,
+                    "classroom": student_detail.info["classLocation"],
+                    "professor_name": student_detail.info["teacherName"],
                     "prompt": CHARACTER_IMPERSONATION_PROMPT.format(
-                        name=student.name,
-                        big5_personality_text=student.personality_text,
-                        biography=biography.response,
+                        name=student_detail.name,
+                        big5_personality_text=student_detail.personality_text,
                     ),
                 }
             )
@@ -112,7 +80,7 @@ class CreatePersonalities:
     async def create_personalities(
         self, class_number: str, professor_name: str, limit: Optional[int] = None
     ) -> List[Dict]:
-        """This function using the ClassroomService to get the students information from MongoDB
+        """Fetch students from MongoDB and build their personality prompts.
 
         Parameters
         ----------
@@ -120,14 +88,15 @@ class CreatePersonalities:
                 Students class number used to query the DB
             professor_name: str
                 Professors name used to query the DB
+            limit: Optional[int]
+                Maximum number of students to process
 
         Returns
         -------
-            StudentDetails
-                Output Dictionary which contains all the necessary information for the user to create a user personality
+            List[Dict]
+                List of dicts with student info and personality prompt
         """
         classroom_details = self.classroom_client.get_classroom_details(
             location=class_number, professor_name=professor_name, limit=limit
         )
-        list_of_biographies = await self.biography_creation(classroom_details)
-        return list_of_biographies
+        return self.build_personality_prompts(classroom_details)

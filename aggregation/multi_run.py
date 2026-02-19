@@ -3,13 +3,18 @@ Multi-Run Executor
 
 Orchestrates multiple simulation runs with random student subset selection
 to gather statistically meaningful aggregated results.
+
+Runs are executed SEQUENTIALLY (one at a time) to avoid overwhelming the LLM provider.
+A short delay between runs helps prevent rate limiting.
 """
 
+import asyncio
 import logging
 import random
-from typing import List, Optional
+from typing import Callable, Dict, List, Optional
 
 from personality.classroom_service import ClassroomService
+from personality.create_class_personalities import CreatePersonalities
 from pydantic_classes import Provider, SimulationRun, StudentDetails, TeacherAgentConfig
 from simulation.orchestrator import SimulationOrchestrator
 
@@ -29,7 +34,9 @@ class MultiRunExecutor:
         class_name: str,
         professor_name: str,
         model_provider: Provider = Provider.LIGHTNING,
-        model_name: str = "lightning-ai/gpt-oss-20b",
+        model_name: str = "lightning-ai/gpt-oss-120b",
+        on_message: Optional[Callable[[dict], None]] = None,
+        on_run_progress: Optional[Callable[[int, int], None]] = None,
     ):
         """
         Initialize the Multi-Run Executor.
@@ -55,6 +62,8 @@ class MultiRunExecutor:
         self.professor_name = professor_name
         self.model_provider = model_provider
         self.model_name = model_name
+        self.on_message = on_message
+        self.on_run_progress = on_run_progress
 
         self.logger = logging.getLogger(__name__)
 
@@ -127,6 +136,33 @@ class MultiRunExecutor:
 
         return self._all_students
 
+    async def _generate_all_personalities(self) -> List[Dict]:
+        """
+        Build personality prompts for ALL students once before the run loop.
+
+        Calling this once avoids redundant DB queries and prompt construction
+        across runs.
+
+        Returns
+        -------
+        List[Dict]
+            List of personality dicts (each with 'college_id', 'name', 'prompt', etc.)
+        """
+        self.logger.info("Building personalities for all students (once)...")
+        personality_service = CreatePersonalities()
+        try:
+            all_personalities = await personality_service.create_personalities(
+                class_number=self.class_name,
+                professor_name=self.professor_name,
+                limit=None,  # Generate for ALL students
+            )
+            self.logger.info(
+                f"Generated {len(all_personalities)} student personalities"
+            )
+            return all_personalities
+        finally:
+            personality_service.close_client()
+
     async def run_multiple(self, n_runs: int) -> List[SimulationRun]:
         """
         Execute multiple simulation runs with random student subsets.
@@ -134,7 +170,7 @@ class MultiRunExecutor:
         For each run:
         1. Randomly select subset of students (50-100% of class)
         2. Create new SimulationOrchestrator with selected students
-        3. Execute simulation
+        3. Execute simulation (reusing pre-generated personalities)
         4. Collect results
 
         Parameters
@@ -163,7 +199,11 @@ class MultiRunExecutor:
             f"Each run will sample {min_sample}-{max_sample} students."
         )
 
+        # Build all student personalities ONCE before the run loop.
+        all_personalities = await self._generate_all_personalities()
+
         runs: List[SimulationRun] = []
+        first_error: Optional[Exception] = None
 
         for run_index in range(n_runs):
             self.logger.info(f"Starting run {run_index + 1}/{n_runs}")
@@ -175,7 +215,13 @@ class MultiRunExecutor:
             )
 
             try:
-                # Create orchestrator with selected students
+                # Tag every message with the current run_index before forwarding
+                def tagged_on_message(msg: dict, _idx: int = run_index) -> None:
+                    msg["run_index"] = _idx
+                    if self.on_message:
+                        self.on_message(msg)
+
+                # Create orchestrator with selected students and prebuilt personalities
                 orchestrator = SimulationOrchestrator(
                     material_file_path=self.material_file_path,
                     teacher_config=self.teacher_config,
@@ -184,6 +230,8 @@ class MultiRunExecutor:
                     selected_student_ids=selected_student_ids,
                     model_provider=self.model_provider,
                     model_name=self.model_name,
+                    on_message=tagged_on_message,
+                    prebuilt_personalities=all_personalities,
                 )
 
                 # Execute simulation
@@ -192,11 +240,26 @@ class MultiRunExecutor:
 
                 self.logger.info(f"Run {run_index + 1} completed successfully")
 
+                if self.on_run_progress:
+                    self.on_run_progress(run_index, n_runs)
+
+                # Pause between runs to avoid overwhelming LLM provider (15-20s random)
+                if run_index < n_runs - 1:
+                    delay = random.uniform(15, 20)
+                    self.logger.info(f"Pausing {delay:.1f}s before next run...")
+                    await asyncio.sleep(delay)
+
             except Exception as e:
                 self.logger.error(f"Run {run_index + 1} failed: {e}")
+                if first_error is None:
+                    first_error = e
                 # Continue with next run on error
 
         self.logger.info(
             f"Multi-run execution completed. {len(runs)}/{n_runs} runs successful."
         )
+
+        if not runs and n_runs > 0 and first_error is not None:
+            raise first_error
+
         return runs

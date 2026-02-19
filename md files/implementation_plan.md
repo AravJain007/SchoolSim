@@ -55,7 +55,7 @@ This plan builds the remaining 65-70% of SIMS Teacher while fully leveraging the
    - `chunk_id`: str
    - `content`: str
    - `difficulty_index`: Optional[float] (0-100 scale, **populated post-simulation** based on student understanding scores — NOT pre-computed)
-   - `page_range`: str (e.g., "Slide 5" or "Page 3")
+   - `page_range`: str (e.g., "Slide 5", "Page 3", or "Paragraph 7")
    - `has_formula`: bool
    - `has_code`: bool
 
@@ -151,7 +151,7 @@ This keeps chunk boundaries predictable and makes it easy to annotate the origin
    - Returns list of `ChunkDetails` with:
      - `chunk_id`: auto-generated (e.g., "chunk_1", "chunk_2")
      - `content`: extracted text
-     - `page_range`: "Slide 3" or "Page 5" (for annotation later)
+     - `page_range`: "Slide 3", "Page 5", or "Paragraph 7" (for annotation later)
      - `has_formula`: detected via regex (useful metadata)
      - `has_code`: detected via regex (useful metadata)
      - `difficulty_index`: **None** (populated post-simulation)
@@ -460,6 +460,18 @@ Reference FinalPlanAgents.md Sections 5.2 and 5.3 for exact JSON structure. Note
 
 **Location:** New module `output/`
 
+### Annotation Granularity by File Type
+
+Different file types have different chunking strategies, which affects annotation granularity:
+
+| File Type | Chunk Unit | Heatmap Method | Annotation Method |
+|-----------|------------|----------------|-------------------|
+| **PDF** | 1 page = 1 chunk | Full-page semi-transparent color overlay | Footer text box at page bottom |
+| **PPT/PPTX** | 1 slide = 1 chunk | Full-slide semi-transparent rectangle | Footer text box at slide bottom |
+| **DOC/DOCX** | 1 paragraph = 1 chunk | **Paragraph-level text highlighting** | **Word comment on specific paragraph** |
+
+> **Note:** DOCX files have **finer granularity** than PDF/PPT. Each paragraph is individually highlighted based on its understanding score, allowing teachers to see exactly which paragraphs caused confusion.
+
 ### Files to Create
 
 1. **`output/__init__.py`**
@@ -469,17 +481,18 @@ Reference FinalPlanAgents.md Sections 5.2 and 5.3 for exact JSON structure. Note
    - Logic:
      - For each chunk: determine color based on avg_understanding
        - < 2: RED (critical confusion)
-       - < 3: ORANGE (caution)
-       - > = 3: GREEN (clear)
-     - Overlay color on original PDF/PPT
-   - Use: `reportlab` for PDF, `python-pptx` for PPT
+       - < 3: ORANGE/YELLOW (caution)
+       - >= 3: GREEN (clear)
+     - **PDF**: Full-page overlay using PyMuPDF's `draw_rect` with `fill_opacity`
+     - **PPT**: Full-slide rectangle shape moved to back layer
+     - **DOCX**: Per-paragraph text run highlighting using `WD_COLOR_INDEX`
    - Return path to annotated file
 
 3. **`output/annotation_writer.py`**
    - Function: `add_footer_notes(file_path: str, chunk: str, annotation: str) -> None`
-   - Adds text box at bottom of relevant page/slide
+   - **PDF/PPT**: Adds text box at bottom of relevant page/slide
+   - **DOCX**: Adds Word comment anchored to the specific paragraph
    - Format: "⚠️ GAP: X% failed. Note: [principal_notes]"
-   - Use: `reportlab` to draw white box + text at coordinates
 
 4. **`output/report_exporter.py`**
    - Function: `export_json_report(results: AggregatedResults, path: str) -> None`
@@ -488,8 +501,10 @@ Reference FinalPlanAgents.md Sections 5.2 and 5.3 for exact JSON structure. Note
 
 ### Dependencies to Install
 
-- `reportlab`
-- Reuse `pymupdf` and `python-pptx` from Task 2
+- `reportlab` (for PDF report generation)
+- `pymupdf` (for PDF heatmap overlays)
+- `python-pptx` (for PPT heatmap and annotations)
+- `python-docx` (for DOCX highlighting and comments)
 
 ---
 

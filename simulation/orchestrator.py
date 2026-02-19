@@ -8,7 +8,7 @@ from start to finish, coordinating teacher, student, and principal agents.
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from material_parser.parser import parse_document
 from personality.classroom_service import ClassroomService
@@ -16,7 +16,6 @@ from personality.create_class_personalities import CreatePersonalities
 from pydantic_classes import (
     ChunkDetails,
     CognitiveState,
-    PrincipalAnalysis,
     Provider,
     ReasoningEffort,
     SimulationRun,
@@ -49,7 +48,9 @@ class SimulationOrchestrator:
         student_limit: Optional[int] = None,
         selected_student_ids: Optional[List[str]] = None,
         model_provider: Provider = Provider.LIGHTNING,
-        model_name: str = "lightning-ai/gpt-oss-20b",
+        model_name: str = "lightning-ai/gpt-oss-120b",
+        on_message: Optional[Callable[[dict], None]] = None,
+        prebuilt_personalities: Optional[List[Dict[str, Any]]] = None,
     ):
         """
         Initialize the Simulation Orchestrator.
@@ -72,6 +73,10 @@ class SimulationOrchestrator:
             LLM provider to use for agent calls
         model_name : str
             Model name to use for agent calls
+        prebuilt_personalities : Optional[List[Dict[str, Any]]]
+            Pre-generated personality prompts (keyed by college_id) to avoid
+            redundant work across multi-run simulations.
+            Each dict should contain at least 'college_id' and 'prompt'.
         """
         self.material_file_path = material_file_path
         self.teacher_config = teacher_config
@@ -81,6 +86,8 @@ class SimulationOrchestrator:
         self.selected_student_ids = selected_student_ids
         self.model_provider = model_provider
         self.model_name = model_name
+        self.on_message = on_message
+        self.prebuilt_personalities = prebuilt_personalities
 
         self.logger = logging.getLogger(__name__)
 
@@ -94,14 +101,16 @@ class SimulationOrchestrator:
         """
         Execute the complete simulation loop.
 
-        Implements the loop from FinalPlanAgents.md Section 4.1:
+        Per-chunk loop:
         1. Teacher teaches chunk
         2. All students rate understanding
         3. Select doubt askers (understanding <= 2, fatigue < 80)
         4. Teacher responds to doubts
         5. Askers re-rate understanding (IRF check)
-        6. Principal analyzes chunk
-        7. Update all student cognitive states
+        6. Update all student cognitive states
+
+        After all chunks:
+        7. Principal runs one holistic KLI analysis over the entire session
 
         Returns
         -------
@@ -117,20 +126,21 @@ class SimulationOrchestrator:
         await self._initialize_simulation()
 
         chunk_results: List[Dict[str, Any]] = []
-        all_principal_analyses: List[PrincipalAnalysis] = []
 
         # Main simulation loop
+        total_chunks = len(self.chunks)
         for chunk_index, chunk in enumerate(self.chunks):
             self.logger.info(
-                f"Processing chunk {chunk_index + 1}/{len(self.chunks)}: {chunk.chunk_id}"
+                f"Processing chunk {chunk_index + 1}/{total_chunks}: {chunk.chunk_id}"
             )
 
             try:
-                result = await self._process_chunk(chunk)
+                result = await self._process_chunk(
+                    chunk,
+                    chunk_number=chunk_index + 1,
+                    total_chunks=total_chunks,
+                )
                 chunk_results.append(result)
-
-                if result.get("principal_analysis"):
-                    all_principal_analyses.append(result["principal_analysis"])
 
             except Exception as e:
                 self.logger.error(f"Error processing chunk {chunk.chunk_id}: {e}")
@@ -142,10 +152,25 @@ class SimulationOrchestrator:
                     }
                 )
 
-        # Generate principal summary
-        principal_summary = await self._generate_principal_summary(
-            all_principal_analyses
+        # Run principal KLI analysis once over the entire session
+        self.logger.info("Running end-of-session KLI analysis...")
+        principal_summary = await self.principal_agent.analyze_session(
+            chunks=self.chunks,
+            chunk_results=chunk_results,
         )
+
+        # Stream principal's end-of-session report to live chat
+        if self.on_message and principal_summary.notes:
+            self.on_message(
+                {
+                    "id": str(uuid.uuid4()),
+                    "sender": "Principal",
+                    "name": "Principal",
+                    "content": principal_summary.notes,
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "type": "principal_summary",
+                }
+            )
 
         # Collect student IDs
         students_selected = [agent.state.student_id for agent in self.student_agents]
@@ -181,55 +206,79 @@ class SimulationOrchestrator:
         self.logger.info(f"Initialized {len(self.student_agents)} student agents")
 
     async def _initialize_students(self) -> None:
-        """Fetch students from database and create student agents."""
-        # Create personalities service
-        personality_service = CreatePersonalities()
+        """Fetch students from database and create student agents.
 
-        try:
-            # Get student personalities (this creates biographies via LLM)
-            student_personalities = await personality_service.create_personalities(
-                class_number=self.class_name,
-                professor_name=self.professor_name,
-                limit=self.student_limit,
+        If prebuilt_personalities were supplied at construction time they are
+        used directly, avoiding redundant DB and personality-building calls
+        across multi-run simulations.
+        """
+        if self.prebuilt_personalities is not None:
+            # Use cached personalities — no extra work needed
+            student_personalities = self.prebuilt_personalities
+            self.logger.info("Using prebuilt personalities")
+        else:
+            # Generate personalities via LLM (original path for single runs)
+            personality_service = CreatePersonalities()
+            try:
+                student_personalities = await personality_service.create_personalities(
+                    class_number=self.class_name,
+                    professor_name=self.professor_name,
+                    limit=self.student_limit,
+                )
+            finally:
+                personality_service.close_client()
+
+        # Build a lookup dict keyed by college_id for reliable matching
+        personality_lookup: Dict[str, str] = {
+            p["college_id"]: p.get("prompt")
+            for p in student_personalities
+            if "college_id" in p
+        }
+
+        # Fetch raw student details for StudentAgent initialization
+        classroom_service = ClassroomService()
+        classroom_details = classroom_service.get_classroom_details(
+            location=self.class_name,
+            professor_name=self.professor_name,
+            limit=self.student_limit,
+        )
+
+        # Filter students if selected_student_ids is provided
+        students_to_use = classroom_details.students
+        if self.selected_student_ids is not None:
+            students_to_use = [
+                s
+                for s in classroom_details.students
+                if s.college_id in self.selected_student_ids
+            ]
+            self.logger.info(
+                f"Filtered to {len(students_to_use)} students from selected_student_ids"
             )
 
-            # Fetch raw student details for StudentAgent initialization
-            classroom_service = ClassroomService()
-            classroom_details = classroom_service.get_classroom_details(
-                location=self.class_name,
-                professor_name=self.professor_name,
-                limit=self.student_limit,
+        # Create StudentAgent for each student
+        for student_details in students_to_use:
+            # Match personality by college_id (reliable) with name fallback
+            personality_prompt = personality_lookup.get(student_details.college_id)
+
+            if personality_prompt is None:
+                # Fallback: match by name for legacy personality dicts
+                for p in student_personalities:
+                    if p.get("name") == student_details.name:
+                        personality_prompt = p.get("prompt")
+                        break
+
+            agent = StudentAgent(
+                student_details=student_details,
+                personality_prompt=personality_prompt,
             )
+            self.student_agents.append(agent)
 
-            # Filter students if selected_student_ids is provided
-            students_to_use = classroom_details.students
-            if self.selected_student_ids is not None:
-                students_to_use = [
-                    s
-                    for s in classroom_details.students
-                    if s.college_id in self.selected_student_ids
-                ]
-                self.logger.info(
-                    f"Filtered to {len(students_to_use)} students from selected_student_ids"
-                )
-
-            # Create StudentAgent for each student
-            for i, student_details in enumerate(students_to_use):
-                # Match personality prompt from created personalities
-                personality_prompt = None
-                if i < len(student_personalities):
-                    personality_prompt = student_personalities[i].get("prompt")
-
-                agent = StudentAgent(
-                    student_details=student_details,
-                    personality_prompt=personality_prompt,
-                )
-                self.student_agents.append(agent)
-
-        finally:
-            personality_service.close_client()
-
-    async def _process_chunk(self, chunk: ChunkDetails) -> Dict[str, Any]:
+    async def _process_chunk(
+        self,
+        chunk: ChunkDetails,
+        chunk_number: int = 1,
+        total_chunks: int = 1,
+    ) -> Dict[str, Any]:
         """
         Process a single chunk through the complete teaching cycle.
 
@@ -237,18 +286,36 @@ class SimulationOrchestrator:
         ----------
         chunk : ChunkDetails
             The chunk to process
+        chunk_number : int
+            1-based index of this chunk (e.g. 3 means "3rd chunk")
+        total_chunks : int
+            Total number of chunks in the session
 
         Returns
         -------
         Dict[str, Any]
-            Results including teaching output, student responses, and principal analysis
+            Results including teaching output and student responses for the chunk
         """
         # Step 1: Teacher teaches chunk
         teaching_output = await self.teacher_agent.teach_chunk(
             chunk=chunk,
+            chunk_number=chunk_number,
+            total_chunks=total_chunks,
             model_provider=self.model_provider,
             model_name=self.model_name,
         )
+
+        # Stream teacher message to live chat
+        if self.on_message and teaching_output.teaching_transcript:
+            self.on_message(
+                {
+                    "id": str(uuid.uuid4()),
+                    "sender": "Teacher",
+                    "name": self.teacher_config.name,
+                    "content": teaching_output.teaching_transcript,
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                }
+            )
 
         # Step 2: All students rate understanding
         student_responses: List[StudentResponse] = []
@@ -273,6 +340,29 @@ class SimulationOrchestrator:
                 )
             )
 
+        # Emit voting summary so the frontend can display student understanding scores
+        if self.on_message:
+            votes = [
+                {
+                    "name": s.name,
+                    "student_id": s.state.student_id,
+                    "understanding": s.state.cognitive_state.understanding,
+                }
+                for s in self.student_agents
+            ]
+            self.on_message(
+                {
+                    "id": str(uuid.uuid4()),
+                    "sender": "System",
+                    "name": "Student Voting",
+                    "content": "",
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "type": "voting",
+                    "chunk_id": chunk.chunk_id,
+                    "votes": votes,
+                }
+            )
+
         # Step 3: Select doubt askers
         doubt_askers = select_doubt_askers(self.student_agents)
 
@@ -283,16 +373,11 @@ class SimulationOrchestrator:
                 chunk=chunk,
                 teaching_output=teaching_output,
                 student_responses=student_responses,
+                chunk_number=chunk_number,
+                total_chunks=total_chunks,
             )
 
-        # Step 6: Principal analyzes chunk
-        principal_analysis = await self.principal_agent.analyze_chunk(
-            chunk=chunk,
-            teaching_transcript=teaching_output.teaching_transcript,
-            student_responses=student_responses,
-        )
-
-        # Step 7: Update all student cognitive states
+        # Step 6: Update all student cognitive states
         for student in self.student_agents:
             CognitiveStateManager.update_after_chunk(student.state)
 
@@ -300,7 +385,6 @@ class SimulationOrchestrator:
             "chunk_id": chunk.chunk_id,
             "teaching_output": teaching_output.model_dump(),
             "student_responses": [r.model_dump() for r in student_responses],
-            "principal_analysis": principal_analysis,
         }
 
     async def _handle_student_doubt(
@@ -309,6 +393,8 @@ class SimulationOrchestrator:
         chunk: ChunkDetails,
         teaching_output: TeachingOutput,
         student_responses: List[StudentResponse],
+        chunk_number: int = 1,
+        total_chunks: int = 1,
     ) -> None:
         """
         Handle doubt generation and response for a single student.
@@ -323,6 +409,10 @@ class SimulationOrchestrator:
             Teacher's explanation of the chunk
         student_responses : List[StudentResponse]
             List to update with doubt information
+        chunk_number : int
+            1-based index of this chunk
+        total_chunks : int
+            Total number of chunks in the session
         """
         try:
             # Step 4: Generate doubt
@@ -336,13 +426,39 @@ class SimulationOrchestrator:
             # Record the doubt
             student.state.doubts_asked.append(doubt)
 
+            # Stream student doubt to live chat
+            if self.on_message and doubt:
+                self.on_message(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "sender": "Student",
+                        "name": student.name,
+                        "content": doubt,
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    }
+                )
+
             # Teacher responds to doubt
             response = await self.teacher_agent.respond_to_doubt(
                 doubt=doubt,
                 chunk=chunk,
+                chunk_number=chunk_number,
+                total_chunks=total_chunks,
                 model_provider=self.model_provider,
                 model_name=self.model_name,
             )
+
+            # Stream teacher response to live chat
+            if self.on_message and response:
+                self.on_message(
+                    {
+                        "id": str(uuid.uuid4()),
+                        "sender": "Teacher",
+                        "name": self.teacher_config.name,
+                        "content": response,
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    }
+                )
 
             # Step 5: Student re-rates understanding (IRF check)
             understanding_after = await student.rerate_after_response(
@@ -367,53 +483,3 @@ class SimulationOrchestrator:
             self.logger.error(
                 f"Error handling doubt for student {student.state.student_id}: {e}"
             )
-
-    async def _generate_principal_summary(
-        self,
-        all_analyses: List[PrincipalAnalysis],
-    ) -> PrincipalAnalysis:
-        """
-        Generate a summary analysis from all chunk analyses.
-
-        Parameters
-        ----------
-        all_analyses : List[PrincipalAnalysis]
-            All per-chunk principal analyses
-
-        Returns
-        -------
-        PrincipalAnalysis
-            Summary analysis for the entire simulation
-        """
-        if not all_analyses:
-            return PrincipalAnalysis(
-                chunk_id="summary",
-                alignment_score=0.0,
-                notes="No chunks were analyzed.",
-            )
-
-        # Calculate average alignment score
-        avg_alignment = sum(a.alignment_score for a in all_analyses) / len(all_analyses)
-
-        # Collect all missing prerequisites
-        all_prerequisites = []
-        for analysis in all_analyses:
-            all_prerequisites.extend(analysis.missing_prerequisites)
-        unique_prerequisites = list(set(all_prerequisites))
-
-        # Collect all suggested methods
-        all_methods = []
-        for analysis in all_analyses:
-            all_methods.extend(analysis.suggested_methods)
-        unique_methods = list(set(all_methods))
-
-        # Generate summary notes using principal agent
-        summary_text = await self.principal_agent.generate_summary(all_analyses)
-
-        return PrincipalAnalysis(
-            chunk_id="summary",
-            alignment_score=avg_alignment,
-            missing_prerequisites=unique_prerequisites,
-            suggested_methods=unique_methods,
-            notes=summary_text,
-        )

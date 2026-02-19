@@ -47,8 +47,10 @@ class TeacherAgent:
     async def teach_chunk(
         self,
         chunk: ChunkDetails,
+        chunk_number: int = 1,
+        total_chunks: int = 1,
         model_provider: Provider = Provider.LIGHTNING,
-        model_name: str = "lightning-ai/gpt-oss-20b",
+        model_name: str = "lightning-ai/gpt-oss-120b",
         reasoning_effort: ReasoningEffort = ReasoningEffort.HIGH,
     ) -> TeachingOutput:
         """
@@ -61,7 +63,7 @@ class TeacherAgent:
         model_provider : Provider, optional
             LLM provider to use (default: LIGHTNING)
         model_name : str, optional
-            Model name to use (default: "lightning-ai/gpt-oss-20b")
+            Model name to use (default: "lightning-ai/gpt-oss-120b")
         reasoning_effort : ReasoningEffort, optional
             Reasoning effort level (default: HIGH)
 
@@ -81,10 +83,11 @@ class TeacherAgent:
             user_prompt = TEACH_CHUNK_PROMPT.format(
                 chunk_id=chunk.chunk_id,
                 page_range=chunk.page_range,
+                chunk_number=chunk_number,
+                total_chunks=total_chunks,
                 content=chunk.content,
                 has_formula=chunk.has_formula,
                 has_code=chunk.has_code,
-                new_terms=", ".join(chunk.new_terms) if chunk.new_terms else "None",
                 name=self.config.name,
             )
 
@@ -159,8 +162,10 @@ class TeacherAgent:
         self,
         doubt: str,
         chunk: ChunkDetails,
+        chunk_number: int = 1,
+        total_chunks: int = 1,
         model_provider: Provider = Provider.LIGHTNING,
-        model_name: str = "lightning-ai/gpt-oss-20b",
+        model_name: str = "lightning-ai/gpt-oss-120b",
         reasoning_effort: ReasoningEffort = ReasoningEffort.HIGH,
     ) -> str:
         """
@@ -175,7 +180,7 @@ class TeacherAgent:
         model_provider : Provider, optional
             LLM provider to use (default: LIGHTNING)
         model_name : str, optional
-            Model name to use (default: "lightning-ai/gpt-oss-20b")
+            Model name to use (default: "lightning-ai/gpt-oss-120b")
         reasoning_effort : ReasoningEffort, optional
             Reasoning effort level (default: HIGH)
 
@@ -196,6 +201,8 @@ class TeacherAgent:
                 doubt=doubt,
                 chunk_id=chunk.chunk_id,
                 page_range=chunk.page_range,
+                chunk_number=chunk_number,
+                total_chunks=total_chunks,
                 content=chunk.content,
                 name=self.config.name,
             )
@@ -219,7 +226,40 @@ class TeacherAgent:
                 )
                 return "I apologize, but I'm having trouble processing your question right now. Could you please rephrase it?"
 
-            return result.response.strip()
+            response = result.response.strip()
+
+            # Strip markdown code fences if present
+            if response.startswith("```"):
+                response = response.strip("`").strip()
+                if response.lower().startswith("json"):
+                    response = response[4:].strip()
+
+            # Some models return JSON despite the plain-text instruction; extract
+            # the actual response text from common wrapper keys.
+            try:
+                parsed = json.loads(response)
+                if isinstance(parsed, dict):
+                    # Try common keys the model might use
+                    for key in (
+                        "response",
+                        "content",
+                        "teaching_transcript",
+                        "answer",
+                        "text",
+                    ):
+                        if key in parsed and isinstance(parsed[key], str):
+                            response = parsed[key]
+                            break
+                    else:
+                        # Fall back to the first string value found
+                        for v in parsed.values():
+                            if isinstance(v, str) and v.strip():
+                                response = v
+                                break
+            except (json.JSONDecodeError, ValueError):
+                pass  # Plain text response — use as-is
+
+            return response
 
         except Exception as e:
             self.logger.error(f"Error responding to doubt: {e}", exc_info=True)
